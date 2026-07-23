@@ -166,7 +166,7 @@ async function carregarLeads() {
     const temGargalo = (l.status === 'novo' && minutosEsperando >= 5) || gargaloAtendimentoHtml !== '';
 
     return `
-      <div class="ticket-card ${temGargalo ? 'gargalo' : ''}">
+      <div class="ticket-card ${temGargalo ? 'gargalo' : ''} lead-clicavel" onclick="abrirConversa(${l.id})">
         <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
         <div class="ticket-body">
           <div class="lead-header">
@@ -177,11 +177,90 @@ async function carregarLeads() {
           ${origemHtml}
           ${tempoHtml}
           ${gargaloAtendimentoHtml}
-          <div class="acao">${acao}</div>
+          <div class="acao" onclick="event.stopPropagation()">${acao}</div>
         </div>
       </div>
     `;
   }).join('');
+}
+
+// ---------------- Conversa completa (estilo WhatsApp) ----------------
+let leadConversaAtual = null;
+
+async function abrirConversa(leadId) {
+  const res = await fetch(`${API}/api/leads/${leadId}`);
+  if (res.status === 401) return window.location.href = '/login.html';
+  if (res.status === 403) {
+    alert('Este lead já está sendo atendido por outro vendedor — sem acesso à conversa.');
+    return;
+  }
+  const lead = await res.json();
+  leadConversaAtual = lead;
+  renderizarConversa(lead);
+  abrirModal('modal-conversa');
+}
+
+function renderizarConversa(lead) {
+  document.getElementById('conversa-titulo').textContent = lead.nome_cliente || lead.telefone;
+  document.getElementById('conversa-subtitulo').textContent = `${lead.telefone} · ${lead.status === 'novo' ? 'Novo' : lead.status === 'em_atendimento' ? 'Em atendimento' : 'Encerrado'}`;
+
+  const msgsEl = document.getElementById('conversa-mensagens');
+  msgsEl.innerHTML = lead.mensagens.map(m => {
+    const classe = m.remetente === 'cliente' ? 'balao-cliente' : m.remetente === 'ia' ? 'balao-ia' : 'balao-vendedor';
+    const hora = new Date(m.criado_em + 'Z').toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `<div class="balao ${classe}">${m.texto}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
+  }).join('');
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+
+  const claimBox = document.getElementById('conversa-acao-claim');
+  const respostaBox = document.getElementById('conversa-caixa-resposta');
+
+  if (lead.dono || usuarioAtual.role === 'admin') {
+    respostaBox.style.display = lead.status === 'encerrado' ? 'none' : 'flex';
+    claimBox.style.display = 'none';
+  } else if (lead.status === 'novo') {
+    respostaBox.style.display = 'none';
+    claimBox.style.display = 'block';
+  } else {
+    respostaBox.style.display = 'none';
+    claimBox.style.display = 'none';
+  }
+  document.getElementById('conversa-texto').value = '';
+}
+
+async function enviarMensagemConversa() {
+  const texto = document.getElementById('conversa-texto').value.trim();
+  if (!texto || !leadConversaAtual) return;
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ texto }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao enviar mensagem');
+    return;
+  }
+
+  const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
+  leadConversaAtual = atualizado;
+  renderizarConversa(atualizado);
+  carregarLeads();
+}
+
+async function puxarLeadDaConversa() {
+  if (!leadConversaAtual) return;
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/claim`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao puxar lead');
+    return;
+  }
+  const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
+  leadConversaAtual = atualizado;
+  renderizarConversa(atualizado);
+  atualizarTudo();
 }
 
 let leadEmEncerramento = null;
