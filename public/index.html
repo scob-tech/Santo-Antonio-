@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Depósito Santo Antônio — Central de Atendimento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #2B3990;
+    --navy-dark: #202B6B;
+    --red: #E63329;
+    --red-dark: #C92A21;
+    --bg: #F1F2F5;
+    --card: #FFFFFF;
+    --text: #1F2430;
+    --muted: #6B7280;
+    --border: #E4E6EB;
+    --green: #16A34A;
+    --green-bg: #E9F7EF;
+    --navy-bg: #E9EAF6;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+  }
+
+  header {
+    background: white;
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 4px solid var(--red);
+  }
+
+  .logo-mark { flex-shrink: 0; }
+
+  .brand-text { flex: 1; }
+
+  .brand-text .sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .user-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+  }
+
+  .user-nome { font-weight: 600; }
+  .user-role {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--navy);
+    background: var(--navy-bg);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+
+  .btn-secundario {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: 'Inter', sans-serif;
+  }
+  .btn-secundario:hover { border-color: var(--red); color: var(--red); }
+
+  main {
+    padding: 24px 28px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 24px;
+    align-items: start;
+  }
+
+  .panel-title {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--navy);
+    margin: 0 0 12px 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .ticket-card {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 2px rgba(43,57,144,0.06);
+    border: 1px solid var(--border);
+    display: flex;
+    gap: 16px;
+  }
+
+  .ticket-card.gargalo {
+    border-color: var(--red);
+    box-shadow: 0 1px 2px rgba(230,51,41,0.12);
+  }
+
+  .ticket-card.restrito { opacity: 0.7; }
+
+  .ticket-number {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    color: var(--navy);
+    background: var(--bg);
+    border: 1px dashed #B9BEDB;
+    border-radius: 6px;
+    min-width: 58px;
+    height: 58px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .ticket-body { flex: 1; min-width: 0; }
+
+  .lead-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .lead-header strong { font-size: 15px; }
+
+  .badge {
+    font-size: 10px;
+    padding: 3px 9px;
+    border-radius: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+  }
+
+  .badge-novo { background: var(--green-bg); color: var(--green); }
+  .badge-atendimento { background: var(--navy-bg); color: var(--navy); }
+  .badge-encerrado { background: #EEE; color: #888; }
+  .badge-restrito { background: #EEE; color: #888; }
+
+  .texto { color: var(--text); margin: 6px 0; font-size: 14px; line-height: 1.4; }
+
+  .origem-tag {
+    font-size: 11px; color: var(--muted);
+    display: inline-block; margin-top: 2px;
+  }
+
+  .alerta {
+    font-size: 12px; margin-top: 6px; font-weight: 700; color: var(--red);
+  }
+
+  .acao { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+
+  button {
+    background: var(--navy);
+    color: white;
+    border: none;
+    padding: 7px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+  }
+  button:hover { background: var(--navy-dark); }
+  button:disabled { background: #D5D8DE; cursor: default; color: #8A8F98; }
+
+  .side-card {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+  }
+
+  .vendedor-name { font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 14px; }
+  .vendedor-count { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .lembrete-titulo { font-size: 13px; font-weight: 600; }
+  .lembrete-quando { font-size: 11px; color: var(--muted); margin: 2px 0 8px; }
+
+  .empty-state {
+    background: var(--card); border: 1px dashed var(--border); border-radius: 8px;
+    padding: 24px; text-align: center; color: var(--muted); font-size: 13px;
+  }
+
+  .link-mini {
+    background: none; border: none; color: var(--navy); font-size: 12px;
+    text-decoration: underline; cursor: pointer; padding: 0; font-weight: 600;
+  }
+
+  .cadastro-form {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; margin-bottom: 16px; display: none;
+  }
+  .cadastro-form.aberto { display: block; }
+  .cadastro-form label { font-size: 11px; color: var(--muted); display: block; margin: 8px 0 3px; }
+  .cadastro-form input, .cadastro-form select {
+    width: 100%; padding: 7px 8px; border-radius: 6px; border: 1px solid var(--border);
+    font-family: 'Inter', sans-serif; font-size: 13px;
+  }
+  .cadastro-form .msg { font-size: 12px; margin-top: 8px; }
+  .cadastro-form .msg.ok { color: var(--green); }
+  .cadastro-form .msg.erro { color: var(--red); }
+
+  .tipo-badge {
+    font-size: 10px; padding: 2px 7px; border-radius: 8px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.3px; display: inline-block; margin-bottom: 4px;
+  }
+  .tipo-orcamento { background: #FFF4E5; color: #B45309; }
+  .tipo-catalogo { background: #E9EAF6; color: var(--navy); }
+  .tipo-frete { background: #E4F3FB; color: #0369A1; }
+  .tipo-pos_venda { background: var(--green-bg); color: var(--green); }
+  .tipo-ligacao { background: #FDEDEC; color: var(--red); }
+  .tipo-objecao { background: #F3E8FD; color: #7C3AED; }
+  .tipo-outro { background: #EEE; color: #666; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(31,36,48,0.5);
+    align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal-overlay.aberto { display: flex; }
+  .modal-box {
+    background: white; border-radius: 10px; padding: 24px; width: 100%; max-width: 380px;
+    max-height: 85vh; overflow-y: auto;
+  }
+  .modal-box h3 {
+    font-family: 'Oswald', sans-serif; font-size: 15px; text-transform: uppercase;
+    color: var(--navy); margin: 0 0 16px 0;
+  }
+  .modal-box label { font-size: 12px; color: var(--muted); display: block; margin: 10px 0 4px; }
+  .modal-box input, .modal-box select, .modal-box textarea {
+    width: 100%; padding: 8px 9px; border-radius: 6px; border: 1px solid var(--border);
+    font-family: 'Inter', sans-serif; font-size: 13px;
+  }
+  .modal-actions { display: flex; gap: 8px; margin-top: 18px; }
+  .modal-actions button { flex: 1; }
+  .modal-actions .cancelar { background: #EEE; color: var(--text); }
+  .modal-actions .cancelar:hover { background: #DDD; }
+  .modal-erro { color: var(--red); font-size: 12px; margin-top: 8px; display: none; }
+
+  .relatorio-metric {
+    background: var(--bg); border-radius: 8px; padding: 12px; text-align: center;
+  }
+  .relatorio-metric .valor { font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 700; color: var(--navy); }
+  .relatorio-metric .label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .relatorio-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px;
+  }
+  .relatorio-vendedor-row {
+    display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .header-actions { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo-mark">
+      <img src="/img/logo.png" alt="Depósito Santo Antônio" height="52" />
+    </div>
+    <div class="brand-text">
+      <div class="sub">Central de Atendimento · Fila de Leads WhatsApp</div>
+    </div>
+    <div class="header-actions">
+      <button class="btn-secundario" onclick="abrirRelatorio()">📊 Relatório do dia</button>
+    </div>
+    <div class="user-box" id="user-box"></div>
+  </header>
+
+  <main>
+    <div class="grid">
+      <div>
+        <div class="panel-title">Fila de atendimento</div>
+        <div id="leads"></div>
+      </div>
+      <div>
+        <div class="panel-title">
+          <span>Vendedores</span>
+          <button class="link-mini" id="btn-toggle-cadastro" style="display:none;">+ Cadastrar</button>
+        </div>
+        <div class="cadastro-form" id="cadastro-form">
+          <label for="c-nome">Nome</label>
+          <input type="text" id="c-nome" />
+          <label for="c-login">Login</label>
+          <input type="text" id="c-login" />
+          <label for="c-senha">Senha</label>
+          <input type="password" id="c-senha" />
+          <label for="c-role">Nível de acesso</label>
+          <select id="c-role">
+            <option value="vendedor">Vendedor</option>
+            <option value="admin">Administrador</option>
+          </select>
+          <button style="margin-top:12px; width:100%;" onclick="cadastrarVendedor()">Salvar</button>
+          <div class="msg" id="cadastro-msg"></div>
+        </div>
+        <div id="vendedores"></div>
+        <div class="panel-title" style="margin-top:20px;">
+          <span>Minha Agenda</span>
+          <button class="link-mini" onclick="abrirNovaTarefa()">+ Tarefa</button>
+        </div>
+        <div id="lembretes"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Modal: encerrar atendimento -->
+  <div class="modal-overlay" id="modal-encerrar">
+    <div class="modal-box">
+      <h3>Encerrar atendimento</h3>
+      <label>Resultado</label>
+      <select id="enc-resultado" onchange="alternarCamposEncerrar()">
+        <option value="">Selecione...</option>
+        <option value="convertido">Convertido (venda fechada)</option>
+        <option value="perdido">Perdido</option>
+      </select>
+
+      <div id="enc-campo-valor" style="display:none;">
+        <label>Valor da venda (R$)</label>
+        <input type="number" id="enc-valor" min="0" step="0.01" />
+      </div>
+
+      <div id="enc-campo-motivo" style="display:none;">
+        <label>Motivo da perda</label>
+        <select id="enc-motivo">
+          <option value="preco">Preço</option>
+          <option value="prazo_frete">Prazo / frete</option>
+          <option value="concorrencia">Concorrência</option>
+          <option value="sem_retorno">Cliente não deu retorno</option>
+          <option value="forma_pagamento">Forma de pagamento</option>
+          <option value="outro">Outro</option>
+        </select>
+        <div id="enc-motivo-outro-box" style="display:none;">
+          <label>Descreva o motivo</label>
+          <input type="text" id="enc-motivo-outro" />
+        </div>
+      </div>
+
+      <div class="modal-erro" id="enc-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-encerrar')">Cancelar</button>
+        <button onclick="confirmarEncerrar()">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: nova tarefa (agenda) -->
+  <div class="modal-overlay" id="modal-tarefa">
+    <div class="modal-box">
+      <h3>Nova tarefa</h3>
+      <label>Lead</label>
+      <select id="tarefa-lead"></select>
+      <label>O que precisa fazer</label>
+      <input type="text" id="tarefa-titulo" placeholder="Ex: mandar orçamento atualizado" />
+      <label>Tipo</label>
+      <select id="tarefa-tipo">
+        <option value="orcamento">Mandar orçamento</option>
+        <option value="catalogo">Mandar catálogo</option>
+        <option value="frete">Calcular frete</option>
+        <option value="pos_venda">Pós-venda</option>
+        <option value="ligacao">Ligar pro cliente</option>
+        <option value="objecao">Quebrar objeção</option>
+        <option value="outro">Outro</option>
+      </select>
+      <label>Quando</label>
+      <input type="datetime-local" id="tarefa-quando" />
+      <div class="modal-erro" id="tarefa-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-tarefa')">Cancelar</button>
+        <button onclick="confirmarTarefa()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: relatório do dia -->
+  <div class="modal-overlay" id="modal-relatorio">
+    <div class="modal-box" style="max-width:480px;">
+      <h3 id="relatorio-titulo">Relatório do dia</h3>
+      <div id="relatorio-conteudo"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-relatorio')">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+<script src="app.js"></script>
+</body>
+</html>

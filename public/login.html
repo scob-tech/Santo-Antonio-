@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Entrar — Depósito Santo Antônio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #2B3990;
+    --navy-dark: #202B6B;
+    --red: #E63329;
+    --bg: #F1F2F5;
+    --card: #FFFFFF;
+    --text: #1F2430;
+    --muted: #6B7280;
+    --border: #E4E6EB;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .login-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px 30px;
+    width: 100%;
+    max-width: 360px;
+    box-shadow: 0 2px 10px rgba(43,57,144,0.08);
+    border-top: 4px solid var(--red);
+  }
+  .logo-mark { text-align: center; margin-bottom: 18px; }
+  .logo-mark img { height: 56px; }
+  h1 {
+    font-family: 'Oswald', sans-serif;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--navy);
+    text-align: center;
+    margin: 0 0 22px 0;
+  }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  input {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  button {
+    width: 100%;
+    background: var(--navy);
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+  }
+  button:hover { background: var(--navy-dark); }
+  .erro {
+    background: #FDEDEC; color: var(--red); font-size: 13px;
+    padding: 8px 10px; border-radius: 6px; margin-bottom: 14px; display: none;
+  }
+</style>
+</head>
+<body>
+  <div class="login-box">
+    <div class="logo-mark"><img src="/img/logo.png" alt="Depósito Santo Antônio" /></div>
+    <h1>Central de Atendimento</h1>
+    <div class="erro" id="erro"></div>
+    <form id="form-login">
+      <label for="login">Login</label>
+      <input type="text" id="login" autocomplete="username" required />
+      <label for="senha">Senha</label>
+      <input type="password" id="senha" autocomplete="current-password" required />
+      <button type="submit">Entrar</button>
+    </form>
+  </div>
+
+<script>
+  document.getElementById('form-login').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const login = document.getElementById('login').value.trim();
+    const senha = document.getElementById('senha').value;
+    const erroEl = document.getElementById('erro');
+    erroEl.style.display = 'none';
+
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, senha }),
+    });
+
+    if (res.ok) {
+      window.location.href = '/';
+    } else {
+      const data = await res.json().catch(() => ({}));
+      erroEl.textContent = data.erro || 'Não foi possível entrar.';
+      erroEl.style.display = 'block';
+    }
+  });
+</script>
+</body>
+</html>
