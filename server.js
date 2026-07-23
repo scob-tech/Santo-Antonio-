@@ -6,6 +6,7 @@ const path = require('path');
 const db = require('./db');
 const ai = require('./ai');
 const authLib = require('./auth');
+const zapi = require('./zapi');
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -89,20 +90,19 @@ app.post('/api/vendedores', requireAuth, requireAdmin, (req, res) => {
 });
 
 // ---------------------------------------------------------------
-// WEBHOOK (hoje é simulado; no futuro, é aqui que a Z-API vai bater
-// toda vez que um cliente mandar mensagem no WhatsApp real).
-// Não exige login: é a origem externa que alimenta o sistema.
+// WEBHOOKS — dois pontos de entrada:
+//   /webhook/message  → simulado (usado pelo scripts/simulate-*.js e testes)
+//   /webhook/zapi     → mensagens reais do WhatsApp via Z-API
+// Ambos convergem na mesma função de processamento, então a lógica de
+// negócio (anti-duplicação, IA, criação de lead) só existe uma vez.
+// Nenhum dos dois exige login: são origens externas alimentando o sistema.
 // ---------------------------------------------------------------
-app.post('/webhook/message', (req, res) => {
-  const { telefone, nome_cliente, texto, origem } = req.body;
 
-  if (!telefone || !texto) {
-    return res.status(400).json({ erro: 'telefone e texto são obrigatórios' });
-  }
-
-  // Evita duplicar leads: se esse telefone já tem uma conversa ATIVA
-  // (novo ou em_atendimento), a mensagem entra nela. Só cria lead novo
-  // se não existir conversa em aberto (ou a anterior já foi encerrada).
+// Processa uma mensagem recebida (de onde quer que tenha vindo) e retorna
+// o resultado. Envia a boas-vindas automática de volta pro WhatsApp de
+// verdade quando a Z-API estiver configurada (enviarMensagemWhatsapp vira
+// no-op silencioso se não estiver — ver zapi.js).
+async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem }) {
   const leadAtivo = db.prepare(`
     SELECT * FROM leads
     WHERE telefone = ? AND status IN ('novo', 'em_atendimento')
@@ -110,25 +110,14 @@ app.post('/webhook/message', (req, res) => {
   `).get(telefone);
 
   if (leadAtivo) {
-    // Já existe conversa em aberto: só registra a mensagem do cliente
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'cliente', ?)`)
       .run(leadAtivo.id, texto);
-
-    return res.status(200).json({
-      lead_id: leadAtivo.id,
-      info: 'mensagem adicionada a conversa existente (lead não duplicado)',
-    });
+    return { lead_id: leadAtivo.id, info: 'mensagem adicionada a conversa existente (lead não duplicado)' };
   }
 
-  // IA identifica possível oportunidade (produtos citados) — já guardamos
-  // isso no próprio lead pra poder mostrar um "resumo" pra quem não tem
-  // acesso à conversa completa (vendedores que não pegaram esse lead).
   const oportunidades = ai.identificarOportunidade(texto);
   const interesse = oportunidades.length > 0 ? oportunidades.join(', ') : null;
 
-  // Cria o lead. "origem" indica de qual número/página do site ele veio
-  // (produtos, duvidas, geral, etc) — mas todos caem na MESMA fila,
-  // qualquer vendedor disponível pode puxar, independente da origem.
   const insertLead = db.prepare(`
     INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse)
     VALUES (?, ?, ?, ?, 'novo', ?)
@@ -136,20 +125,53 @@ app.post('/webhook/message', (req, res) => {
   const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', interesse);
   const leadId = info.lastInsertRowid;
 
-  // Salva a mensagem do cliente
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'cliente', ?)`)
     .run(leadId, texto);
 
-  // IA gera e "envia" a mensagem de boas-vindas automática
   const boasVindas = ai.gerarMensagemBoasVindas(texto, nome_cliente);
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'ia', ?)`)
     .run(leadId, boasVindas);
 
-  res.status(201).json({
-    lead_id: leadId,
-    mensagem_boas_vindas: boasVindas,
-    oportunidades_detectadas: oportunidades,
+  // Manda a boas-vindas de verdade pro WhatsApp do cliente (se configurado)
+  await zapi.enviarMensagemWhatsapp(telefone, boasVindas);
+
+  return { lead_id: leadId, mensagem_boas_vindas: boasVindas, oportunidades_detectadas: oportunidades };
+}
+
+app.post('/webhook/message', async (req, res) => {
+  const { telefone, nome_cliente, texto, origem } = req.body;
+  if (!telefone || !texto) {
+    return res.status(400).json({ erro: 'telefone e texto são obrigatórios' });
+  }
+  const resultado = await processarMensagemRecebida({ telefone, nome_cliente, texto, origem });
+  res.status(resultado.mensagem_boas_vindas ? 201 : 200).json(resultado);
+});
+
+// Webhook real da Z-API — configure essa URL no painel da instância em
+// "Webhooks" → "Ao receber" (ReceivedCallback): https://SEU-DOMINIO/webhook/zapi
+app.post('/webhook/zapi', async (req, res) => {
+  const { telefone, nomeCliente, texto, messageId, fromMe } = zapi.interpretarWebhook(req.body);
+
+  // Sempre responde 200 rápido pra Z-API não ficar reenviando —
+  // qualquer motivo de "ignorar" ainda assim é uma resposta de sucesso.
+  if (fromMe) {
+    return res.status(200).json({ info: 'mensagem enviada por nós mesmos, ignorada' });
+  }
+  if (zapi.jaProcessada(messageId)) {
+    return res.status(200).json({ info: 'mensagem já processada antes (duplicada), ignorada' });
+  }
+  if (!telefone || !texto) {
+    return res.status(200).json({ info: 'payload sem telefone/texto reconhecível, ignorado' });
+  }
+
+  zapi.marcarProcessada(messageId);
+  const resultado = await processarMensagemRecebida({
+    telefone,
+    nome_cliente: nomeCliente,
+    texto,
+    origem: 'whatsapp',
   });
+  res.status(200).json(resultado);
 });
 
 // ---------------------------------------------------------------
@@ -274,7 +296,7 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
 });
 
 // Vendedor envia mensagem pro cliente — só o dono do lead ou o admin
-app.post('/api/leads/:id/mensagens', requireAuth, (req, res) => {
+app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   const { texto } = req.body;
   if (!texto) return res.status(400).json({ erro: 'texto é obrigatório' });
 
@@ -289,7 +311,9 @@ app.post('/api/leads/:id/mensagens', requireAuth, (req, res) => {
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'vendedor', ?)`)
     .run(req.params.id, texto);
 
-  res.status(201).json({ ok: true });
+  const envio = await zapi.enviarMensagemWhatsapp(lead.telefone, texto);
+
+  res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado });
 });
 
 // ---------------------------------------------------------------
