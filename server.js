@@ -184,41 +184,49 @@ app.post('/webhook/zapi', async (req, res) => {
 // LEADS
 // ---------------------------------------------------------------
 
-// Fila completa: leads 'novo' aparecem por inteiro pra todo mundo.
-// Leads em atendimento/encerrados só aparecem por inteiro pro dono
-// (quem puxou) ou pro admin — pros demais, só um resumo mínimo
-// (nome + interesse), sem telefone e sem conversa.
+// Fila: cada pessoa só recebe o que faz sentido pra ela ver, direto do banco —
+// não é mais "manda tudo e restringe no front". Isso resolve dois problemas
+// de uma vez: a fila não fica gigante com histórico de dias passados, e um
+// lead que outro vendedor pegou simplesmente não aparece mais pros demais.
 app.get('/api/leads', requireAuth, (req, res) => {
-  const { status } = req.query;
+  // Admin pode pedir um dia específico do histórico (?data=2026-07-22) — nesse
+  // caso mostra TUDO daquele dia, sem o filtro de "ainda ativo" da fila normal.
+  // Sem esse parâmetro, cai no comportamento padrão (fila ao vivo, sem acumular).
+  const dataFiltro = req.usuario.role === 'admin' ? req.query.data : null;
   let leads;
-  if (status) {
-    leads = db.prepare('SELECT * FROM leads WHERE status = ? ORDER BY criado_em DESC').all(status);
+
+  if (req.usuario.role === 'admin') {
+    if (dataFiltro) {
+      leads = db.prepare(`
+        SELECT * FROM leads WHERE date(criado_em) = date(?) ORDER BY criado_em DESC
+      `).all(dataFiltro);
+    } else {
+      // Vê tudo que ainda está ativo (não importa quando chegou — um lead em
+      // atendimento nunca some sozinho) + os encerrados só de hoje, pra ter o
+      // retrato do dia sem acumular semanas de histórico na fila.
+      leads = db.prepare(`
+        SELECT * FROM leads
+        WHERE status != 'encerrado' OR date(criado_em) = date('now')
+        ORDER BY criado_em DESC
+      `).all();
+    }
   } else {
-    leads = db.prepare('SELECT * FROM leads ORDER BY criado_em DESC').all();
+    // Vendedor só vê o que pode pegar (novo, pra todo mundo) e o que já é
+    // dele em atendimento. Assim que ele encerra, ou outro vendedor pega
+    // um lead que era novo, esse lead simplesmente some da tela dele.
+    leads = db.prepare(`
+      SELECT * FROM leads
+      WHERE status = 'novo' OR (status = 'em_atendimento' AND vendedor_id = ?)
+      ORDER BY criado_em DESC
+    `).all(req.usuario.id);
   }
 
   const resultado = leads.map((lead) => {
     const dono = lead.vendedor_id === req.usuario.id;
-    const podeVerTudo = req.usuario.role === 'admin' || dono || lead.status === 'novo';
-
-    if (podeVerTudo) {
-      const ultima = db.prepare(
-        'SELECT remetente, texto, criado_em FROM mensagens WHERE lead_id = ? ORDER BY id DESC LIMIT 1'
-      ).get(lead.id);
-      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono };
-    }
-
-    // Versão restrita: só dados mínimos
-    return {
-      id: lead.id,
-      nome_cliente: lead.nome_cliente,
-      interesse: lead.interesse,
-      origem: lead.origem,
-      status: lead.status,
-      criado_em: lead.criado_em,
-      restrito: true,
-      dono: false,
-    };
+    const ultima = db.prepare(
+      'SELECT remetente, texto, criado_em FROM mensagens WHERE lead_id = ? ORDER BY id DESC LIMIT 1'
+    ).get(lead.id);
+    return { ...lead, ultima_mensagem: ultima || null, dono };
   });
 
   res.json(resultado);
@@ -320,6 +328,46 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   const envio = await zapi.enviarMensagemWhatsapp(lead.telefone, texto);
 
   res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado });
+});
+
+// ---------------------------------------------------------------
+// LEAD MANUAL — pra contato proativo fora do fluxo automático de
+// WhatsApp (ex: carrinho abandonado, reativação de cliente antigo).
+// O vendedor já iniciou essa conversa por fora do sistema (WhatsApp
+// pessoal, pra não arriscar o número oficial). Aqui ele só faz o
+// pré-cadastro: o lead nasce direto em "em_atendimento", atribuído a
+// quem criou, e segue o mesmo fluxo de encerramento de qualquer outro
+// lead — assim entra certinho no relatório do dia e no ticket médio.
+// ---------------------------------------------------------------
+const ORIGENS_MANUAIS = ['carrinho_abandonado', 'reativacao', 'outro'];
+app.post('/api/leads/manual', requireAuth, (req, res) => {
+  const { nome_cliente, telefone, interesse, origem, vendedor_id } = req.body;
+  if (!nome_cliente || !telefone || !interesse) {
+    return res.status(400).json({ erro: 'nome, telefone e intenção de compra são obrigatórios' });
+  }
+
+  // Evita duplicar lead se já existe um atendimento em aberto pra esse telefone
+  const jaAberto = db.prepare(`
+    SELECT id FROM leads WHERE telefone = ? AND status IN ('novo', 'em_atendimento')
+  `).get(telefone);
+  if (jaAberto) {
+    return res.status(409).json({ erro: 'já existe um atendimento em aberto pra esse telefone', lead_id: jaAberto.id });
+  }
+
+  const origemFinal = ORIGENS_MANUAIS.includes(origem) ? origem : 'outro';
+  // Só admin pode criar o lead já atribuído a outro vendedor; qualquer outro caso, é pra si mesmo
+  const vendedorDestino = req.usuario.role === 'admin' && vendedor_id ? vendedor_id : req.usuario.id;
+
+  const info = db.prepare(`
+    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse, vendedor_id)
+    VALUES (?, ?, ?, ?, 'em_atendimento', ?, ?)
+  `).run(telefone, nome_cliente, interesse, origemFinal, interesse, vendedorDestino);
+
+  const leadId = info.lastInsertRowid;
+  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'vendedor', ?)`)
+    .run(leadId, `Lead cadastrado manualmente. Intenção: ${interesse}`);
+
+  res.status(201).json({ ok: true, id: leadId });
 });
 
 // ---------------------------------------------------------------
