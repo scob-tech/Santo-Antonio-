@@ -242,6 +242,7 @@
   .tipo-pos_venda { background: var(--green-bg); color: var(--green); }
   .tipo-ligacao { background: #FDEDEC; color: var(--red); }
   .tipo-objecao { background: #F3E8FD; color: #7C3AED; }
+  .tipo-oportunidade { background: #FFF9E5; color: #92700C; }
   .tipo-outro { background: #EEE; color: #666; }
 
   .modal-overlay {
@@ -302,6 +303,7 @@
     </div>
     <div class="header-actions">
       <button class="btn-secundario" onclick="abrirRelatorio()">📊 Relatório do dia</button>
+      <button class="btn-secundario" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Rodar análise diária</button>
     </div>
     <div class="user-box" id="user-box"></div>
   </header>
@@ -346,6 +348,9 @@
   <div class="modal-overlay" id="modal-encerrar">
     <div class="modal-box">
       <h3>Encerrar atendimento</h3>
+      <button class="link-mini" id="btn-sugerir-encerramento" onclick="sugerirEncerramentoIA()" style="margin-bottom:4px;">🤖 Sugerir com IA (lê a conversa)</button>
+      <div class="modal-erro" id="enc-ia-status" style="display:none; color:var(--navy); margin-bottom:8px;"></div>
+
       <label>Resultado</label>
       <select id="enc-resultado" onchange="alternarCamposEncerrar()">
         <option value="">Selecione...</option>
@@ -386,6 +391,10 @@
   <div class="modal-overlay" id="modal-tarefa">
     <div class="modal-box">
       <h3>Nova tarefa</h3>
+      <div id="tarefa-campo-vendedor" style="display:none;">
+        <label>Atribuir a</label>
+        <select id="tarefa-vendedor"></select>
+      </div>
       <label>Lead</label>
       <select id="tarefa-lead"></select>
       <label>O que precisa fazer</label>
@@ -398,6 +407,7 @@
         <option value="pos_venda">Pós-venda</option>
         <option value="ligacao">Ligar pro cliente</option>
         <option value="objecao">Quebrar objeção</option>
+        <option value="oportunidade">Oportunidade (venda complementar)</option>
         <option value="outro">Outro</option>
       </select>
       <label>Quando</label>
@@ -427,12 +437,16 @@
       <h3 id="conversa-titulo" style="margin-bottom:2px;">Conversa</h3>
       <div id="conversa-subtitulo" style="font-size:12px; color:var(--muted); margin-bottom:12px;"></div>
       <div id="conversa-mensagens" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding:4px 2px;"></div>
+      <div id="conversa-sugestao-tarefa" style="display:none; margin-top:10px; padding:10px 12px; background:var(--bg); border-radius:8px; font-size:12px;"></div>
       <div id="conversa-acao-claim" style="display:none; margin-top:10px;">
         <button style="width:100%;" onclick="puxarLeadDaConversa()">Pegar este lead pra responder</button>
       </div>
-      <div id="conversa-caixa-resposta" style="display:none; margin-top:10px; display:flex; gap:8px;">
-        <input type="text" id="conversa-texto" placeholder="Escreva uma mensagem..." style="flex:1; padding:8px 9px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px;" onkeydown="if(event.key==='Enter') enviarMensagemConversa();" />
-        <button onclick="enviarMensagemConversa()">Enviar</button>
+      <div id="conversa-caixa-resposta" style="display:none; margin-top:10px; flex-direction:column; gap:6px;">
+        <button class="link-mini" onclick="sugerirTarefaIA()" style="align-self:flex-start;">🤖 Sugerir tarefa (lê a conversa)</button>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="conversa-texto" placeholder="Escreva uma mensagem..." style="flex:1; padding:8px 9px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px;" onkeydown="if(event.key==='Enter') enviarMensagemConversa();" />
+          <button onclick="enviarMensagemConversa()">Enviar</button>
+        </div>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
         <button class="cancelar" onclick="fecharModal('modal-conversa')" style="flex:1;">Fechar</button>

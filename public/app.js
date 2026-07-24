@@ -1,10 +1,12 @@
 const API = '';
 let usuarioAtual = null;
 let leadsCache = [];
+let vendedoresCache = [];
 
 const LABELS_TIPO = {
   orcamento: 'Orçamento', catalogo: 'Catálogo', frete: 'Frete',
-  pos_venda: 'Pós-venda', ligacao: 'Ligação', objecao: 'Objeção', outro: 'Outro',
+  pos_venda: 'Pós-venda', ligacao: 'Ligação', objecao: 'Objeção',
+  oportunidade: 'Oportunidade', outro: 'Outro',
 };
 
 function fecharModal(id) {
@@ -39,7 +41,27 @@ function renderizarUserBox() {
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
     };
+    document.getElementById('btn-rodar-analise').style.display = 'inline-block';
   }
+}
+
+async function rodarAnaliseDiariaAgora() {
+  const btn = document.getElementById('btn-rodar-analise');
+  btn.disabled = true;
+  btn.textContent = '🤖 Rodando...';
+
+  const res = await fetch(`${API}/api/admin/rodar-analise-diaria`, { method: 'POST' });
+  const resultado = await res.json();
+
+  btn.disabled = false;
+  btn.textContent = '🤖 Rodar análise diária';
+
+  if (!res.ok || !resultado.rodou) {
+    alert(resultado.erro || (resultado.motivo === 'ia_nao_configurada' ? 'IA não configurada ainda nesse servidor.' : 'Não rodou.'));
+    return;
+  }
+  alert(`Análise concluída: ${resultado.conversas_revisadas} conversa(s) revisada(s), ${resultado.tarefas_criadas} tarefa(s) criada(s).`);
+  carregarLembretes();
 }
 
 async function sair() {
@@ -78,6 +100,7 @@ async function carregarVendedores() {
   const res = await fetch(`${API}/api/vendedores`);
   if (res.status === 401) return window.location.href = '/login.html';
   const vendedores = await res.json();
+  vendedoresCache = vendedores;
   const el = document.getElementById('vendedores');
   el.innerHTML = vendedores.map(v => `
     <div class="side-card">
@@ -226,6 +249,9 @@ function renderizarConversa(lead) {
     claimBox.style.display = 'none';
   }
   document.getElementById('conversa-texto').value = '';
+  const sugestaoBox = document.getElementById('conversa-sugestao-tarefa');
+  sugestaoBox.style.display = 'none';
+  sugestaoBox.innerHTML = '';
 }
 
 async function enviarMensagemConversa() {
@@ -263,6 +289,70 @@ async function puxarLeadDaConversa() {
   atualizarTudo();
 }
 
+async function sugerirEncerramentoIA() {
+  if (!leadEmEncerramento) return;
+  const statusEl = document.getElementById('enc-ia-status');
+  statusEl.style.display = 'block';
+  statusEl.style.color = 'var(--navy)';
+  statusEl.textContent = 'Lendo a conversa...';
+
+  const res = await fetch(`${API}/api/leads/${leadEmEncerramento}/sugestao-encerramento`);
+  const sugestao = await res.json();
+
+  if (!res.ok) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = sugestao.erro || 'Não consegui sugerir agora.';
+    return;
+  }
+
+  if (sugestao.resultado_sugerido === 'convertido' || sugestao.resultado_sugerido === 'perdido') {
+    document.getElementById('enc-resultado').value = sugestao.resultado_sugerido;
+    alternarCamposEncerrar();
+    if (sugestao.resultado_sugerido === 'convertido' && sugestao.valor_sugerido) {
+      document.getElementById('enc-valor').value = sugestao.valor_sugerido;
+    }
+    if (sugestao.resultado_sugerido === 'perdido' && sugestao.motivo_perda_sugerido) {
+      document.getElementById('enc-motivo').value = 'outro';
+      document.getElementById('enc-motivo-outro-box').style.display = 'block';
+      document.getElementById('enc-motivo-outro').value = sugestao.motivo_perda_sugerido;
+    }
+  }
+
+  const confiancaLabel = { alta: 'confiança alta', media: 'confiança média', baixa: 'confiança baixa' }[sugestao.confianca] || '';
+  statusEl.style.color = 'var(--navy)';
+  statusEl.textContent = `🤖 ${sugestao.resumo || 'Sugestão aplicada'} (${confiancaLabel || 'confira antes de confirmar'})`;
+}
+
+async function sugerirTarefaIA() {
+  if (!leadConversaAtual) return;
+  const box = document.getElementById('conversa-sugestao-tarefa');
+  box.style.display = 'block';
+  box.textContent = '🤖 Lendo a conversa...';
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/sugestao-tarefa`);
+  const sugestao = await res.json();
+
+  if (!res.ok) {
+    box.textContent = sugestao.erro || 'Não consegui sugerir agora.';
+    return;
+  }
+
+  if (!sugestao.sugerir) {
+    box.textContent = '🤖 Não achei nenhuma ação pendente óbvia nessa conversa.';
+    return;
+  }
+
+  box.innerHTML = `🤖 Sugestão: <strong>${sugestao.titulo}</strong> <button class="link-mini" style="margin-left:6px;" onclick='usarSugestaoTarefa(${JSON.stringify(sugestao).replace(/'/g, "&apos;")})'>Criar essa tarefa</button>`;
+}
+
+function usarSugestaoTarefa(sugestao) {
+  fecharModal('modal-conversa');
+  abrirNovaTarefa();
+  document.getElementById('tarefa-lead').value = leadConversaAtual.id;
+  document.getElementById('tarefa-titulo').value = sugestao.titulo || '';
+  if (sugestao.tipo) document.getElementById('tarefa-tipo').value = sugestao.tipo;
+}
+
 let leadEmEncerramento = null;
 
 function encerrarLead(leadId) {
@@ -273,6 +363,7 @@ function encerrarLead(leadId) {
   document.getElementById('enc-campo-valor').style.display = 'none';
   document.getElementById('enc-campo-motivo').style.display = 'none';
   document.getElementById('enc-erro').style.display = 'none';
+  document.getElementById('enc-ia-status').style.display = 'none';
   abrirModal('modal-encerrar');
 }
 
@@ -342,12 +433,31 @@ async function confirmarEncerrar() {
 // ---------------- Nova tarefa (agenda) ----------------
 function abrirNovaTarefa() {
   const selLead = document.getElementById('tarefa-lead');
-  const meusLeads = leadsCache.filter(l => l.dono && l.status !== 'encerrado');
-  if (meusLeads.length === 0) {
-    selLead.innerHTML = `<option value="">Você não tem leads em atendimento</option>`;
+  const campoVendedor = document.getElementById('tarefa-campo-vendedor');
+  const selVendedor = document.getElementById('tarefa-vendedor');
+
+  const ehAdmin = usuarioAtual.role === 'admin';
+  // Admin pode criar tarefa em cima de qualquer lead em atendimento (não só os que ele mesmo puxou)
+  const leadsDisponiveis = ehAdmin
+    ? leadsCache.filter(l => l.status === 'em_atendimento')
+    : leadsCache.filter(l => l.dono && l.status !== 'encerrado');
+
+  if (leadsDisponiveis.length === 0) {
+    selLead.innerHTML = `<option value="">Nenhum lead em atendimento no momento</option>`;
   } else {
-    selLead.innerHTML = meusLeads.map(l => `<option value="${l.id}">${l.nome_cliente || l.telefone}</option>`).join('');
+    selLead.innerHTML = leadsDisponiveis.map(l => `<option value="${l.id}">${l.nome_cliente || l.telefone}</option>`).join('');
   }
+
+  if (ehAdmin) {
+    campoVendedor.style.display = 'block';
+    const vendedores = vendedoresCache.filter(v => v.role === 'vendedor');
+    selVendedor.innerHTML = vendedores.length > 0
+      ? vendedores.map(v => `<option value="${v.id}">${v.nome}</option>`).join('')
+      : `<option value="${usuarioAtual.id}">Eu mesmo (Administrador)</option>`;
+  } else {
+    campoVendedor.style.display = 'none';
+  }
+
   document.getElementById('tarefa-titulo').value = '';
   document.getElementById('tarefa-erro').style.display = 'none';
   // padrão: amanhã, mesmo horário
@@ -364,6 +474,7 @@ async function confirmarTarefa() {
   const titulo = document.getElementById('tarefa-titulo').value.trim();
   const tipo = document.getElementById('tarefa-tipo').value;
   const quandoLocal = document.getElementById('tarefa-quando').value;
+  const vendedor_id = usuarioAtual.role === 'admin' ? document.getElementById('tarefa-vendedor').value : undefined;
 
   if (!lead_id || !titulo || !quandoLocal) {
     erroEl.textContent = 'Preencha lead, o que fazer e quando.';
@@ -374,7 +485,7 @@ async function confirmarTarefa() {
   const res = await fetch(`${API}/api/lembretes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lead_id, titulo, tipo, quando: new Date(quandoLocal).toISOString() }),
+    body: JSON.stringify({ lead_id, titulo, tipo, quando: new Date(quandoLocal).toISOString(), vendedor_id }),
   });
 
   if (!res.ok) {
