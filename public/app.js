@@ -2,11 +2,17 @@ const API = '';
 let usuarioAtual = null;
 let leadsCache = [];
 let vendedoresCache = [];
+let filtroDataAtual = null; // null = fila ao vivo (padrão); 'AAAA-MM-DD' = revendo um dia específico (só admin)
 
 const LABELS_TIPO = {
   orcamento: 'Orçamento', catalogo: 'Catálogo', frete: 'Frete',
   pos_venda: 'Pós-venda', ligacao: 'Ligação', objecao: 'Objeção',
   oportunidade: 'Oportunidade', outro: 'Outro',
+};
+
+const LABELS_ORIGEM = {
+  carrinho_abandonado: 'Carrinho abandonado', reativacao: 'Reativação',
+  whatsapp: 'WhatsApp', produtos: 'Produtos', duvidas: 'Dúvidas', geral: 'Geral',
 };
 
 function fecharModal(id) {
@@ -42,6 +48,7 @@ function renderizarUserBox() {
       document.getElementById('cadastro-form').classList.toggle('aberto');
     };
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
+    document.getElementById('btn-toggle-filtro-data').style.display = 'inline-block';
   }
 }
 
@@ -111,22 +118,47 @@ async function carregarVendedores() {
   return vendedores;
 }
 
+// ---------------- Filtro por dia (só admin) ----------------
+function alternarFiltroData() {
+  const bar = document.getElementById('filtro-data-bar');
+  const abrindo = bar.style.display === 'none';
+  bar.style.display = abrindo ? 'flex' : 'none';
+  if (abrindo && !document.getElementById('filtro-data-input').value) {
+    document.getElementById('filtro-data-input').value = new Date().toISOString().slice(0, 10);
+  }
+}
+
+async function aplicarFiltroData() {
+  const data = document.getElementById('filtro-data-input').value;
+  if (!data) return;
+  filtroDataAtual = data;
+  document.getElementById('btn-limpar-filtro').style.display = 'inline-block';
+  document.getElementById('filtro-data-label').textContent =
+    `Mostrando tudo de ${new Date(data + 'T12:00:00').toLocaleDateString('pt-BR')}`;
+  await atualizarTudo();
+}
+
+async function limparFiltroData() {
+  filtroDataAtual = null;
+  document.getElementById('btn-limpar-filtro').style.display = 'none';
+  document.getElementById('filtro-data-label').textContent = '';
+  await atualizarTudo();
+}
+
 async function carregarLeads() {
-  const res = await fetch(`${API}/api/leads`);
+  const url = filtroDataAtual ? `${API}/api/leads?data=${filtroDataAtual}` : `${API}/api/leads`;
+  const res = await fetch(url);
   if (res.status === 401) return window.location.href = '/login.html';
   const leads = await res.json();
   leadsCache = leads;
   const el = document.getElementById('leads');
 
   if (leads.length === 0) {
-    el.innerHTML = `<div class="empty-state">Nenhum cliente na fila. Assim que uma mensagem chegar no WhatsApp, aparece aqui.</div>`;
+    el.innerHTML = `<div class="empty-state">${filtroDataAtual ? 'Nenhum lead nesse dia.' : 'Nenhum cliente na fila. Assim que uma mensagem chegar no WhatsApp, aparece aqui.'}</div>`;
     return;
   }
 
   // Leads novos primeiro (fila de espera), ordenados por quem espera há mais tempo.
-  // A ordem de chegada também vira o número da senha (ticket).
-  const porChegada = [...leads].sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
-  const numeroSenha = new Map(porChegada.map((l, i) => [l.id, i + 1]));
 
   const ordenados = [...leads].sort((a, b) => {
     if (a.status === 'novo' && b.status !== 'novo') return -1;
@@ -135,23 +167,6 @@ async function carregarLeads() {
   });
 
   el.innerHTML = ordenados.map(l => {
-    // Lead restrito: outro vendedor já pegou, só mostramos o mínimo
-    if (l.restrito) {
-      return `
-        <div class="ticket-card restrito">
-          <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
-          <div class="ticket-body">
-            <div class="lead-header">
-              <strong>${l.nome_cliente || 'Cliente'}</strong>
-              <span class="badge badge-restrito">Em atendimento</span>
-            </div>
-            <div class="texto">${l.interesse ? `Interesse: ${l.interesse}` : 'Sem produto identificado'}</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:4px;">Já está sendo atendido por outro vendedor</div>
-          </div>
-        </div>
-      `;
-    }
-
     const badge = l.status === 'novo'
       ? `<span class="badge badge-novo">Novo</span>`
       : l.status === 'em_atendimento'
@@ -167,39 +182,38 @@ async function carregarLeads() {
 
     // Tempo de espera na FILA — destaca se passou de 5 min sem ser puxado (gargalo de fila)
     const minutosEsperando = Math.floor((Date.now() - new Date(l.criado_em + 'Z')) / 60000);
-    let tempoHtml = '';
-    if (l.status === 'novo') {
-      const alerta = minutosEsperando >= 5;
-      tempoHtml = `<div class="${alerta ? 'alerta' : ''}" style="${alerta ? '' : 'font-size:12px; color:var(--muted); margin-top:6px;'}">
-        ${alerta ? '⚠️ ' : ''}Esperando há ${minutosEsperando} min${alerta ? ' — gargalo de fila' : ''}
-      </div>`;
-    }
+    const gargaloFila = l.status === 'novo' && minutosEsperando >= 5;
 
     // Gargalo DURANTE o atendimento — cliente já foi pego por um vendedor,
     // mas a última mensagem foi dele (cliente) e o vendedor ainda não respondeu
-    let gargaloAtendimentoHtml = '';
+    let gargaloAtendimento = false;
+    let minutosSemResposta = 0;
     if (l.status === 'em_atendimento' && l.ultima_mensagem && l.ultima_mensagem.remetente === 'cliente') {
-      const minutosSemResposta = Math.floor((Date.now() - new Date(l.ultima_mensagem.criado_em + 'Z')) / 60000);
-      if (minutosSemResposta >= 5) {
-        gargaloAtendimentoHtml = `<div class="alerta">⚠️ Cliente esperando resposta há ${minutosSemResposta} min — gargalo de atendimento</div>`;
-      }
+      minutosSemResposta = Math.floor((Date.now() - new Date(l.ultima_mensagem.criado_em + 'Z')) / 60000);
+      gargaloAtendimento = minutosSemResposta >= 5;
     }
+    const temGargalo = gargaloFila || gargaloAtendimento;
 
-    const origemHtml = `<span class="origem-tag">Origem: ${l.origem}</span>`;
-    const temGargalo = (l.status === 'novo' && minutosEsperando >= 5) || gargaloAtendimentoHtml !== '';
+    // Linha única de metadados — origem + tempo/gargalo, pra não empilhar várias linhas por card
+    let metaHtml = `<span>${LABELS_ORIGEM[l.origem] || l.origem}</span>`;
+    if (gargaloFila) {
+      metaHtml += `<span class="alerta-inline">⚠️ esperando há ${minutosEsperando} min</span>`;
+    } else if (gargaloAtendimento) {
+      metaHtml += `<span class="alerta-inline">⚠️ cliente sem resposta há ${minutosSemResposta} min</span>`;
+    } else if (l.status === 'novo') {
+      metaHtml += `<span>· esperando há ${minutosEsperando} min</span>`;
+    }
 
     return `
       <div class="ticket-card ${temGargalo ? 'gargalo' : ''} lead-clicavel" onclick="abrirConversa(${l.id})">
-        <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
+        <div class="ticket-number">${String(l.id).padStart(3, '0')}</div>
         <div class="ticket-body">
           <div class="lead-header">
             <strong>${l.nome_cliente || l.telefone}</strong>
             ${badge}
           </div>
           <div class="texto">${l.primeira_mensagem}</div>
-          ${origemHtml}
-          ${tempoHtml}
-          ${gargaloAtendimentoHtml}
+          <div class="meta-linha">${metaHtml}</div>
           <div class="acao" onclick="event.stopPropagation()">${acao}</div>
         </div>
       </div>
@@ -524,7 +538,8 @@ function metricasHtml(m) {
 }
 
 async function abrirRelatorio() {
-  const res = await fetch(`${API}/api/relatorio`);
+  const url = filtroDataAtual ? `${API}/api/relatorio?data=${filtroDataAtual}` : `${API}/api/relatorio`;
+  const res = await fetch(url);
   if (res.status === 401) return window.location.href = '/login.html';
   const r = await res.json();
 
@@ -578,6 +593,48 @@ async function puxarLead(leadId) {
     const err = await res.json();
     alert(err.erro || 'Erro ao puxar lead');
   }
+  atualizarTudo();
+}
+
+// ---------------- Novo lead manual (carrinho abandonado / reativação) ----------------
+function abrirLeadManual() {
+  document.getElementById('lm-nome').value = '';
+  document.getElementById('lm-telefone').value = '';
+  document.getElementById('lm-interesse').value = '';
+  document.getElementById('lm-origem').value = 'carrinho_abandonado';
+  document.getElementById('lm-erro').style.display = 'none';
+  abrirModal('modal-lead-manual');
+}
+
+async function confirmarLeadManual() {
+  const erroEl = document.getElementById('lm-erro');
+  erroEl.style.display = 'none';
+
+  const nome_cliente = document.getElementById('lm-nome').value.trim();
+  const telefone = document.getElementById('lm-telefone').value.trim();
+  const interesse = document.getElementById('lm-interesse').value.trim();
+  const origem = document.getElementById('lm-origem').value;
+
+  if (!nome_cliente || !telefone || !interesse) {
+    erroEl.textContent = 'Preencha nome, telefone e intenção de compra.';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  const res = await fetch(`${API}/api/leads/manual`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome_cliente, telefone, interesse, origem }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    erroEl.textContent = err.erro || 'Erro ao criar lead';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  fecharModal('modal-lead-manual');
   atualizarTudo();
 }
 

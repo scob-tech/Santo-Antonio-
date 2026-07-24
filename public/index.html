@@ -112,12 +112,12 @@
   .ticket-card {
     background: var(--card);
     border-radius: 8px;
-    padding: 16px 18px;
-    margin-bottom: 12px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
     box-shadow: 0 1px 2px rgba(43,57,144,0.06);
     border: 1px solid var(--border);
     display: flex;
-    gap: 16px;
+    gap: 12px;
   }
 
   .ticket-card.gargalo {
@@ -125,20 +125,19 @@
     box-shadow: 0 1px 2px rgba(230,51,41,0.12);
   }
 
-  .ticket-card.restrito { opacity: 0.7; }
-
   .ticket-number {
     font-family: 'Oswald', sans-serif;
     font-weight: 700;
-    font-size: 22px;
+    font-size: 13px;
     color: var(--navy);
     background: var(--bg);
     border: 1px dashed #B9BEDB;
     border-radius: 6px;
-    min-width: 58px;
-    height: 58px;
+    min-width: 38px;
+    height: 38px;
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
+    align-self: center;
   }
 
   .ticket-body { flex: 1; min-width: 0; }
@@ -150,7 +149,7 @@
     gap: 8px;
   }
 
-  .lead-header strong { font-size: 15px; }
+  .lead-header strong { font-size: 14px; }
 
   .badge {
     font-size: 10px;
@@ -165,20 +164,20 @@
   .badge-novo { background: var(--green-bg); color: var(--green); }
   .badge-atendimento { background: var(--navy-bg); color: var(--navy); }
   .badge-encerrado { background: #EEE; color: #888; }
-  .badge-restrito { background: #EEE; color: #888; }
 
-  .texto { color: var(--text); margin: 6px 0; font-size: 14px; line-height: 1.4; }
-
-  .origem-tag {
-    font-size: 11px; color: var(--muted);
-    display: inline-block; margin-top: 2px;
+  .texto {
+    color: var(--text); margin: 3px 0; font-size: 13px; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
-  .alerta {
-    font-size: 12px; margin-top: 6px; font-weight: 700; color: var(--red);
+  .meta-linha {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    font-size: 11px; color: var(--muted); margin-top: 2px;
   }
+  .alerta-inline { color: var(--red); font-weight: 700; }
 
-  .acao { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+  .acao { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+  .acao button { padding: 5px 12px; font-size: 12px; }
 
   button {
     background: var(--navy);
@@ -207,6 +206,18 @@
 
   .lembrete-titulo { font-size: 13px; font-weight: 600; }
   .lembrete-quando { font-size: 11px; color: var(--muted); margin: 2px 0 8px; }
+
+  .filtro-data-bar {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 13px;
+  }
+  .filtro-data-bar input[type="date"] {
+    padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+    font-family: 'Inter', sans-serif; font-size: 13px;
+  }
+  .filtro-data-bar button { padding: 6px 12px; font-size: 12px; }
+  #filtro-data-label { font-size: 12px; color: var(--muted); font-weight: 600; }
 
   .empty-state {
     background: var(--card); border: 1px dashed var(--border); border-radius: 8px;
@@ -311,7 +322,19 @@
   <main>
     <div class="grid">
       <div>
-        <div class="panel-title">Fila de atendimento</div>
+        <div class="panel-title">
+          <span>Fila de atendimento</span>
+          <div style="display:flex; gap:8px;">
+            <button class="link-mini" id="btn-toggle-filtro-data" style="display:none;" onclick="alternarFiltroData()">📅 Ver por dia</button>
+            <button class="link-mini" onclick="abrirLeadManual()">+ Novo lead</button>
+          </div>
+        </div>
+        <div class="filtro-data-bar" id="filtro-data-bar" style="display:none;">
+          <input type="date" id="filtro-data-input" />
+          <button onclick="aplicarFiltroData()">Ver esse dia</button>
+          <button class="cancelar" id="btn-limpar-filtro" style="display:none;" onclick="limparFiltroData()">Voltar pra fila atual</button>
+          <span id="filtro-data-label"></span>
+        </div>
         <div id="leads"></div>
       </div>
       <div>
@@ -416,6 +439,33 @@
       <div class="modal-actions">
         <button class="cancelar" onclick="fecharModal('modal-tarefa')">Cancelar</button>
         <button onclick="confirmarTarefa()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: novo lead manual (carrinho abandonado / reativação) -->
+  <div class="modal-overlay" id="modal-lead-manual">
+    <div class="modal-box">
+      <h3>Novo lead manual</h3>
+      <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">
+        Pra contato que você já iniciou por fora do sistema (carrinho abandonado, cliente antigo etc). A conversa em si acontece no seu WhatsApp — aqui você só registra pra entrar no relatório.
+      </div>
+      <label for="lm-nome">Nome do cliente</label>
+      <input type="text" id="lm-nome" />
+      <label for="lm-telefone">Telefone (com DDD)</label>
+      <input type="text" id="lm-telefone" placeholder="11999998888" />
+      <label for="lm-interesse">Intenção de compra</label>
+      <input type="text" id="lm-interesse" placeholder="Ex: ver se precisa de mais cimento" />
+      <label for="lm-origem">Origem</label>
+      <select id="lm-origem">
+        <option value="carrinho_abandonado">Carrinho abandonado</option>
+        <option value="reativacao">Reativação de cliente antigo</option>
+        <option value="outro">Outro</option>
+      </select>
+      <div class="modal-erro" id="lm-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-lead-manual')">Cancelar</button>
+        <button onclick="confirmarLeadManual()">Salvar</button>
       </div>
     </div>
   </div>
