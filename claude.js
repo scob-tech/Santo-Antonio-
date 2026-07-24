@@ -68,9 +68,13 @@ function formatarTranscricao(mensagens) {
 
 // Gera boas-vindas + resumo de interesse quando um lead novo chega.
 // Retorna { boas_vindas, interesse } ou null se IA não configurada/falhou.
-async function processarNovaMensagem(texto, nomeCliente) {
-  const system = `Você escreve mensagens automáticas de boas-vindas para o WhatsApp do Depósito Santo Antônio, uma loja de material de construção em São Paulo. Seu tom é caloroso, humano e prestativo — nunca robótico, nunca genérico demais. Responda SOMENTE em JSON válido, sem markdown, no formato exato:
-{"boas_vindas": "mensagem curta em português, no máximo 3 frases, avisando que um vendedor já vai atender, mostrando que leu o que o cliente escreveu", "interesse": "resumo bem curto (3-6 palavras) do que o cliente quer, ex: 'cimento e areia' ou 'orçamento de tijolo'"}`;
+async function processarNovaMensagem(texto, nomeCliente, statusHorario) {
+  const contextoHorario = statusHorario && !statusHorario.aberto
+    ? ` A loja está FECHADA agora (fora do horário de funcionamento) — a próxima abertura é ${statusHorario.proxima_abertura_texto}. Avise disso de forma natural na mensagem, deixando claro que o pedido já foi anotado e que um vendedor vai atender assim que a loja abrir.`
+    : '';
+
+  const system = `Você escreve mensagens automáticas de boas-vindas para o WhatsApp do Depósito Santo Antônio, uma loja de material de construção em São Paulo. Seu tom é caloroso, humano e prestativo — nunca robótico, nunca genérico demais.${contextoHorario} Responda SOMENTE em JSON válido, sem markdown, no formato exato:
+{"boas_vindas": "mensagem curta em português, no máximo 3 frases, mostrando que leu o que o cliente escreveu e avisando quando será atendido", "interesse": "resumo bem curto (3-6 palavras) do que o cliente quer, ex: 'cimento e areia' ou 'orçamento de tijolo'"}`;
 
   const userMsg = `Mensagem do cliente${nomeCliente ? ` (${nomeCliente})` : ''}: "${texto}"`;
   const resposta = await chamarClaude(system, userMsg, 300);

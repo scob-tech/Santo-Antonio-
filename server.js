@@ -9,6 +9,7 @@ const authLib = require('./auth');
 const zapi = require('./zapi');
 const claudeIA = require('./claude');
 const agendador = require('./agendador');
+const horario = require('./horario');
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -117,13 +118,16 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     return { lead_id: leadAtivo.id, info: 'mensagem adicionada a conversa existente (lead não duplicado)' };
   }
 
+  const statusHorario = horario.statusAgora();
   const oportunidades = ai.identificarOportunidade(texto);
 
   // Tenta gerar boas-vindas + resumo com IA de verdade; se não estiver
   // configurada (ou falhar), cai pro stub de palavra-chave (ai.js).
-  const iaResposta = await claudeIA.processarNovaMensagem(texto, nome_cliente);
+  // Os dois já sabem se a loja está aberta ou fechada agora, e ajustam
+  // a mensagem — mas o lead entra na fila do mesmo jeito de sempre.
+  const iaResposta = await claudeIA.processarNovaMensagem(texto, nome_cliente, statusHorario);
   const interesse = (iaResposta && iaResposta.interesse) || (oportunidades.length > 0 ? oportunidades.join(', ') : null);
-  const boasVindas = (iaResposta && iaResposta.boas_vindas) || ai.gerarMensagemBoasVindas(texto, nome_cliente);
+  const boasVindas = (iaResposta && iaResposta.boas_vindas) || ai.gerarMensagemBoasVindas(texto, nome_cliente, statusHorario);
 
   const insertLead = db.prepare(`
     INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse)
