@@ -7,6 +7,8 @@ const db = require('./db');
 const ai = require('./ai');
 const authLib = require('./auth');
 const zapi = require('./zapi');
+const claudeIA = require('./claude');
+const agendador = require('./agendador');
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -116,7 +118,12 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   }
 
   const oportunidades = ai.identificarOportunidade(texto);
-  const interesse = oportunidades.length > 0 ? oportunidades.join(', ') : null;
+
+  // Tenta gerar boas-vindas + resumo com IA de verdade; se não estiver
+  // configurada (ou falhar), cai pro stub de palavra-chave (ai.js).
+  const iaResposta = await claudeIA.processarNovaMensagem(texto, nome_cliente);
+  const interesse = (iaResposta && iaResposta.interesse) || (oportunidades.length > 0 ? oportunidades.join(', ') : null);
+  const boasVindas = (iaResposta && iaResposta.boas_vindas) || ai.gerarMensagemBoasVindas(texto, nome_cliente);
 
   const insertLead = db.prepare(`
     INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse)
@@ -128,7 +135,6 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'cliente', ?)`)
     .run(leadId, texto);
 
-  const boasVindas = ai.gerarMensagemBoasVindas(texto, nome_cliente);
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'ia', ?)`)
     .run(leadId, boasVindas);
 
@@ -362,9 +368,10 @@ app.post('/api/lembretes/:id/concluir', requireAuth, (req, res) => {
 
 // Criação manual de lembrete/tarefa — vendedor monta a própria agenda
 // (ex: "mandar orçamento", "calcular frete") em cima de um lead que já é dele.
-const TIPOS_LEMBRETE = ['orcamento', 'catalogo', 'frete', 'pos_venda', 'ligacao', 'objecao', 'outro'];
+// Admin também pode criar tarefa PRA outro vendedor (ex: revisar atendimento).
+const TIPOS_LEMBRETE = ['orcamento', 'catalogo', 'frete', 'pos_venda', 'ligacao', 'objecao', 'oportunidade', 'outro'];
 app.post('/api/lembretes', requireAuth, (req, res) => {
-  const { lead_id, titulo, quando, tipo } = req.body;
+  const { lead_id, titulo, quando, tipo, vendedor_id } = req.body;
   if (!lead_id || !titulo || !quando) {
     return res.status(400).json({ erro: 'lead_id, titulo e quando são obrigatórios' });
   }
@@ -378,12 +385,62 @@ app.post('/api/lembretes', requireAuth, (req, res) => {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode criar tarefa nesse lead' });
   }
 
+  // Só admin pode atribuir a tarefa a outro vendedor; qualquer outro caso, é pra si mesmo
+  const vendedorDestino = req.usuario.role === 'admin' && vendedor_id ? vendedor_id : req.usuario.id;
+
   const info = db.prepare(`
     INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
     VALUES (?, ?, ?, ?, ?)
-  `).run(lead_id, req.usuario.id, titulo, quando, tipoFinal);
+  `).run(lead_id, vendedorDestino, titulo, quando, tipoFinal);
 
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
+});
+
+// Disparo manual da análise diária (útil pra testar sem esperar 18h, ou se
+// o servidor esteve fora do ar na hora automática) — só admin.
+app.post('/api/admin/rodar-analise-diaria', requireAuth, requireAdmin, async (req, res) => {
+  const resultado = await agendador.rodarAnaliseDiaria();
+  res.json(resultado);
+});
+
+// ---------------------------------------------------------------
+// SUGESTÕES DA IA — a IA lê a conversa e sugere, mas nunca grava
+// nada sozinha. O vendedor (ou admin) sempre confirma com um clique.
+// ---------------------------------------------------------------
+app.get('/api/leads/:id/sugestao-encerramento', requireAuth, async (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+
+  const dono = lead.vendedor_id === req.usuario.id;
+  if (req.usuario.role !== 'admin' && !dono) {
+    return res.status(403).json({ erro: 'sem permissão pra esse lead' });
+  }
+  if (!claudeIA.configurado) {
+    return res.status(503).json({ erro: 'IA ainda não configurada nesse servidor (falta ANTHROPIC_API_KEY)' });
+  }
+
+  const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(req.params.id);
+  const sugestao = await claudeIA.analisarConversa(mensagens);
+  if (!sugestao) return res.status(502).json({ erro: 'IA não conseguiu analisar agora, tenta de novo em instantes' });
+  res.json(sugestao);
+});
+
+app.get('/api/leads/:id/sugestao-tarefa', requireAuth, async (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+
+  const dono = lead.vendedor_id === req.usuario.id;
+  if (req.usuario.role !== 'admin' && !dono) {
+    return res.status(403).json({ erro: 'sem permissão pra esse lead' });
+  }
+  if (!claudeIA.configurado) {
+    return res.status(503).json({ erro: 'IA ainda não configurada nesse servidor (falta ANTHROPIC_API_KEY)' });
+  }
+
+  const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(req.params.id);
+  const sugestao = await claudeIA.sugerirTarefa(mensagens);
+  if (!sugestao) return res.status(502).json({ erro: 'IA não conseguiu analisar agora, tenta de novo em instantes' });
+  res.json(sugestao);
 });
 
 // ---------------------------------------------------------------
@@ -487,4 +544,5 @@ app.get('/api/relatorio', requireAuth, (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando em http://localhost:${PORT}`);
+  agendador.iniciarAgendador();
 });
