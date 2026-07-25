@@ -260,6 +260,26 @@ async function abrirConversa(leadId) {
   abrirModal('modal-conversa');
 }
 
+function renderizarMidia(m) {
+  if (!m.midia_url) return '';
+  if (m.midia_tipo === 'imagem') {
+    return `<a href="${m.midia_url}" target="_blank" rel="noopener"><img src="${m.midia_url}" style="max-width:100%; border-radius:8px; margin-bottom:6px; display:block;" /></a>`;
+  }
+  if (m.midia_tipo === 'audio') {
+    return `<audio controls src="${m.midia_url}" style="max-width:220px; margin-bottom:6px; display:block;"></audio>`;
+  }
+  if (m.midia_tipo === 'video') {
+    return `<video controls src="${m.midia_url}" style="max-width:100%; border-radius:8px; margin-bottom:6px; display:block;"></video>`;
+  }
+  if (m.midia_tipo === 'documento') {
+    return `<a href="${m.midia_url}" target="_blank" rel="noopener" style="display:block; margin-bottom:6px;">📄 Abrir documento</a>`;
+  }
+  if (m.midia_tipo === 'sticker') {
+    return `<img src="${m.midia_url}" style="max-width:100px; display:block; margin-bottom:4px;" />`;
+  }
+  return '';
+}
+
 function renderizarConversa(lead) {
   document.getElementById('conversa-titulo').textContent = lead.nome_cliente || lead.telefone;
   document.getElementById('conversa-subtitulo').textContent = `${lead.telefone} · ${lead.status === 'novo' ? 'Novo' : lead.status === 'em_atendimento' ? 'Em atendimento' : 'Encerrado'}`;
@@ -268,7 +288,7 @@ function renderizarConversa(lead) {
   msgsEl.innerHTML = lead.mensagens.map(m => {
     const classe = m.remetente === 'cliente' ? 'balao-cliente' : m.remetente === 'ia' ? 'balao-ia' : 'balao-vendedor';
     const hora = new Date(m.criado_em + 'Z').toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    return `<div class="balao ${classe}">${m.texto}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
+    return `<div class="balao ${classe}">${renderizarMidia(m)}${m.texto}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
   }).join('');
   msgsEl.scrollTop = msgsEl.scrollHeight;
 
@@ -664,11 +684,32 @@ async function puxarLead(leadId) {
   atualizarTudo();
 }
 
+async function atualizarConversaAberta() {
+  const modal = document.getElementById('modal-conversa');
+  if (!modal.classList.contains('aberto') || !leadConversaAtual) return;
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}`);
+  if (!res.ok) return;
+  const atualizado = await res.json();
+
+  // Só re-renderiza se realmente chegou mensagem nova — evita apagar o que
+  // o vendedor está digitando na caixa de resposta a cada 3 segundos
+  const tinhaAntes = leadConversaAtual.mensagens ? leadConversaAtual.mensagens.length : 0;
+  const temAgora = atualizado.mensagens ? atualizado.mensagens.length : 0;
+  if (temAgora !== tinhaAntes || atualizado.status !== leadConversaAtual.status) {
+    const rascunho = document.getElementById('conversa-texto').value;
+    leadConversaAtual = atualizado;
+    renderizarConversa(atualizado);
+    document.getElementById('conversa-texto').value = rascunho;
+  }
+}
+
 async function atualizarTudo() {
   await carregarVendedores();
   await carregarLeads();
   await carregarConversasAtivas();
   await carregarLembretes();
+  await atualizarConversaAberta();
 }
 
 (async function iniciar() {
