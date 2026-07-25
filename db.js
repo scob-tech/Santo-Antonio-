@@ -85,6 +85,14 @@ if (!colunaExiste('leads', 'motivo_perda')) {
 if (!colunaExiste('lembretes', 'tipo')) {
   db.exec(`ALTER TABLE lembretes ADD COLUMN tipo TEXT NOT NULL DEFAULT 'outro'`);
 }
+// mídia recebida (imagem, áudio, vídeo, documento, sticker) — guardamos a URL
+// e o tipo pra poder exibir direto no chat, sem precisar abrir o WhatsApp
+if (!colunaExiste('mensagens', 'midia_url')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN midia_url TEXT`);
+}
+if (!colunaExiste('mensagens', 'midia_tipo')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN midia_tipo TEXT`);
+}
 
 // ---------------------------------------------------------------
 // Garante que sempre existe pelo menos 1 administrador.

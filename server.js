@@ -121,7 +121,7 @@ app.post('/api/vendedores/:id/redefinir-senha', requireAuth, requireAdmin, (req,
 // o resultado. Envia a boas-vindas automática de volta pro WhatsApp de
 // verdade quando a Z-API estiver configurada (enviarMensagemWhatsapp vira
 // no-op silencioso se não estiver — ver zapi.js).
-async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem }) {
+async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo }) {
   const leadAtivo = db.prepare(`
     SELECT * FROM leads
     WHERE telefone = ? AND status IN ('novo', 'em_atendimento')
@@ -129,8 +129,8 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   `).get(telefone);
 
   if (leadAtivo) {
-    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'cliente', ?)`)
-      .run(leadAtivo.id, texto);
+    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
+      .run(leadAtivo.id, texto, midia_url || null, midia_tipo || null);
     return { lead_id: leadAtivo.id, info: 'mensagem adicionada a conversa existente (lead não duplicado)' };
   }
 
@@ -149,8 +149,8 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', interesse);
   const leadId = info.lastInsertRowid;
 
-  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'cliente', ?)`)
-    .run(leadId, texto);
+  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
+    .run(leadId, texto, midia_url || null, midia_tipo || null);
 
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'ia', ?)`)
     .run(leadId, boasVindas);
@@ -173,7 +173,7 @@ app.post('/webhook/message', async (req, res) => {
 // Webhook real da Z-API — configure essa URL no painel da instância em
 // "Webhooks" → "Ao receber" (ReceivedCallback): https://SEU-DOMINIO/webhook/zapi
 app.post('/webhook/zapi', async (req, res) => {
-  const { telefone, nomeCliente, texto, messageId, fromMe } = zapi.interpretarWebhook(req.body);
+  const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe } = zapi.interpretarWebhook(req.body);
 
   // Sempre responde 200 rápido pra Z-API não ficar reenviando —
   // qualquer motivo de "ignorar" ainda assim é uma resposta de sucesso.
@@ -193,6 +193,8 @@ app.post('/webhook/zapi', async (req, res) => {
     nome_cliente: nomeCliente,
     texto,
     origem: 'whatsapp',
+    midia_url: midiaUrl,
+    midia_tipo: midiaTipo,
   });
   res.status(200).json(resultado);
 });

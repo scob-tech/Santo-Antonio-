@@ -49,6 +49,9 @@ function marcarProcessada(messageId) {
 // de webhook "ao receber" da Z-API. O texto pode vir em formatos diferentes
 // dependendo do tipo de mensagem (texto simples, botão, lista, etc) —
 // tentamos os campos mais comuns e caímos num fallback genérico.
+// Extrai {telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe}
+// de um payload de webhook "ao receber" da Z-API. Baseado na documentação
+// oficial (developer.z-api.io/webhooks/on-message-received-examples).
 function interpretarWebhook(body) {
   const telefone = body.phone || body.connectedPhone || null;
   const nomeCliente = body.senderName || body.chatName || null;
@@ -56,17 +59,54 @@ function interpretarWebhook(body) {
   const fromMe = Boolean(body.fromMe);
 
   let texto = null;
+  let midiaUrl = null;
+  let midiaTipo = null;
+
   if (body.text && body.text.message) {
+    // Cobre texto simples E mensagem com link/preview (a Z-API manda os dois
+    // no mesmo formato text.message, só com description/url/thumbnailUrl extras)
     texto = body.text.message;
   } else if (body.buttonsResponseMessage && body.buttonsResponseMessage.message) {
     texto = body.buttonsResponseMessage.message;
   } else if (body.listResponseMessage && body.listResponseMessage.message) {
     texto = body.listResponseMessage.message;
-  } else if (body.image || body.video || body.audio || body.document || body.sticker) {
-    texto = '[mídia recebida — abra o WhatsApp pra ver o conteúdo]';
+  } else if (body.image) {
+    texto = body.image.caption || '[Imagem]';
+    midiaUrl = body.image.imageUrl;
+    midiaTipo = 'imagem';
+  } else if (body.audio) {
+    texto = body.audio.ptt ? '[Áudio]' : '[Áudio]';
+    midiaUrl = body.audio.audioUrl;
+    midiaTipo = 'audio';
+  } else if (body.video) {
+    texto = body.video.caption || '[Vídeo]';
+    midiaUrl = body.video.videoUrl;
+    midiaTipo = 'video';
+  } else if (body.document) {
+    texto = `[Documento] ${body.document.fileName || body.document.title || ''}`.trim();
+    midiaUrl = body.document.documentUrl;
+    midiaTipo = 'documento';
+  } else if (body.sticker) {
+    texto = '[Sticker]';
+    midiaUrl = body.sticker.stickerUrl;
+    midiaTipo = 'sticker';
+  } else if (body.product) {
+    // Cliente compartilhou um produto do catálogo (ex: link de produto do site/catálogo)
+    texto = `[Produto] ${body.product.title || ''}`.trim();
+    if (body.product.productImage) { midiaUrl = body.product.productImage; midiaTipo = 'imagem'; }
+  } else if (body.location) {
+    texto = `[Localização] ${body.location.address || `${body.location.latitude}, ${body.location.longitude}`}`;
+  } else if (body.contact) {
+    texto = `[Contato] ${body.contact.displayName || ''}`;
   }
 
-  return { telefone, nomeCliente, texto, messageId, fromMe };
+  // Formato não reconhecido — loga o payload inteiro pra investigar depois
+  // em vez de simplesmente perder a mensagem em silêncio.
+  if (!texto && !fromMe) {
+    console.log('>> Webhook Z-API com formato não reconhecido, payload completo:', JSON.stringify(body));
+  }
+
+  return { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe };
 }
 
 // Manda uma mensagem de texto de verdade pro WhatsApp do cliente.
