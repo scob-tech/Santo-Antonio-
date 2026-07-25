@@ -1,18 +1,13 @@
 const API = '';
 let usuarioAtual = null;
 let leadsCache = [];
+let conversasAtivasCache = [];
 let vendedoresCache = [];
-let filtroDataAtual = null; // null = fila ao vivo (padrão); 'AAAA-MM-DD' = revendo um dia específico (só admin)
 
 const LABELS_TIPO = {
   orcamento: 'Orçamento', catalogo: 'Catálogo', frete: 'Frete',
   pos_venda: 'Pós-venda', ligacao: 'Ligação', objecao: 'Objeção',
   oportunidade: 'Oportunidade', outro: 'Outro',
-};
-
-const LABELS_ORIGEM = {
-  carrinho_abandonado: 'Carrinho abandonado', reativacao: 'Reativação',
-  whatsapp: 'WhatsApp', produtos: 'Produtos', duvidas: 'Dúvidas', geral: 'Geral',
 };
 
 function fecharModal(id) {
@@ -38,6 +33,7 @@ function renderizarUserBox() {
   el.innerHTML = `
     <span class="user-nome">${usuarioAtual.nome}</span>
     <span class="user-role">${usuarioAtual.role === 'admin' ? 'Administrador' : 'Vendedor'}</span>
+    ${usuarioAtual.role === 'admin' ? `<button class="btn-secundario" onclick="abrirModalSenha(${usuarioAtual.id}, 'você')">🔑 Minha senha</button>` : ''}
     <button class="btn-secundario" onclick="sair()">Sair</button>
   `;
 
@@ -48,8 +44,45 @@ function renderizarUserBox() {
       document.getElementById('cadastro-form').classList.toggle('aberto');
     };
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
-    document.getElementById('btn-toggle-filtro-data').style.display = 'inline-block';
   }
+}
+
+let vendedorEmRedefinicao = null;
+
+function abrirModalSenha(vendedorId, nome) {
+  vendedorEmRedefinicao = vendedorId;
+  document.getElementById('senha-titulo').textContent = `Redefinir senha de ${nome}`;
+  document.getElementById('senha-nova').value = '';
+  document.getElementById('senha-erro').style.display = 'none';
+  abrirModal('modal-senha');
+}
+
+async function confirmarRedefinirSenha() {
+  const senha = document.getElementById('senha-nova').value;
+  const erroEl = document.getElementById('senha-erro');
+  erroEl.style.display = 'none';
+
+  if (!senha || senha.length < 4) {
+    erroEl.textContent = 'Senha muito curta (mínimo 4 caracteres).';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  const res = await fetch(`${API}/api/vendedores/${vendedorEmRedefinicao}/redefinir-senha`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ senha }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    erroEl.textContent = err.erro || 'Erro ao redefinir senha';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  fecharModal('modal-senha');
+  alert('Senha atualizada com sucesso.');
 }
 
 async function rodarAnaliseDiariaAgora() {
@@ -109,64 +142,53 @@ async function carregarVendedores() {
   const vendedores = await res.json();
   vendedoresCache = vendedores;
   const el = document.getElementById('vendedores');
+  const ehAdmin = usuarioAtual && usuarioAtual.role === 'admin';
   el.innerHTML = vendedores.map(v => `
     <div class="side-card">
-      <div class="vendedor-name">${v.nome}${v.role === 'admin' ? ' 👑' : ''}</div>
+      <div class="vendedor-name" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>${v.nome}${v.role === 'admin' ? ' 👑' : ''}</span>
+        ${ehAdmin ? `<button class="link-mini" onclick="abrirModalSenha(${v.id}, '${v.nome.replace(/'/g, "\\'")}')">🔑 senha</button>` : ''}
+      </div>
       <div class="vendedor-count">${v.leads_ativos} atendimento${v.leads_ativos === 1 ? '' : 's'} ativo${v.leads_ativos === 1 ? '' : 's'}</div>
     </div>
   `).join('');
   return vendedores;
 }
 
-// ---------------- Filtro por dia (só admin) ----------------
-function alternarFiltroData() {
-  const bar = document.getElementById('filtro-data-bar');
-  const abrindo = bar.style.display === 'none';
-  bar.style.display = abrindo ? 'flex' : 'none';
-  if (abrindo && !document.getElementById('filtro-data-input').value) {
-    document.getElementById('filtro-data-input').value = new Date().toISOString().slice(0, 10);
-  }
-}
-
-async function aplicarFiltroData() {
-  const data = document.getElementById('filtro-data-input').value;
-  if (!data) return;
-  filtroDataAtual = data;
-  document.getElementById('btn-limpar-filtro').style.display = 'inline-block';
-  document.getElementById('filtro-data-label').textContent =
-    `Mostrando tudo de ${new Date(data + 'T12:00:00').toLocaleDateString('pt-BR')}`;
-  await atualizarTudo();
-}
-
-async function limparFiltroData() {
-  filtroDataAtual = null;
-  document.getElementById('btn-limpar-filtro').style.display = 'none';
-  document.getElementById('filtro-data-label').textContent = '';
-  await atualizarTudo();
-}
-
 async function carregarLeads() {
-  const url = filtroDataAtual ? `${API}/api/leads?data=${filtroDataAtual}` : `${API}/api/leads`;
-  const res = await fetch(url);
+  const res = await fetch(`${API}/api/leads?status=novo`);
   if (res.status === 401) return window.location.href = '/login.html';
   const leads = await res.json();
   leadsCache = leads;
   const el = document.getElementById('leads');
 
   if (leads.length === 0) {
-    el.innerHTML = `<div class="empty-state">${filtroDataAtual ? 'Nenhum lead nesse dia.' : 'Nenhum cliente na fila. Assim que uma mensagem chegar no WhatsApp, aparece aqui.'}</div>`;
+    el.innerHTML = `<div class="empty-state">Nenhum lead novo esperando. Assim que uma mensagem chegar no WhatsApp, aparece aqui.</div>`;
     return;
   }
 
-  // Leads novos primeiro (fila de espera), ordenados por quem espera há mais tempo.
-
-  const ordenados = [...leads].sort((a, b) => {
-    if (a.status === 'novo' && b.status !== 'novo') return -1;
-    if (a.status !== 'novo' && b.status === 'novo') return 1;
-    return new Date(a.criado_em) - new Date(b.criado_em);
-  });
+  // Ordenados por quem chegou primeiro — a ordem de chegada vira o número da senha (ticket)
+  const ordenados = [...leads].sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
+  const numeroSenha = new Map(ordenados.map((l, i) => [l.id, i + 1]));
 
   el.innerHTML = ordenados.map(l => {
+    // Lead restrito: outro vendedor já pegou, só mostramos o mínimo
+    if (l.restrito) {
+      return `
+        <div class="ticket-card restrito">
+          <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
+          <div class="ticket-body">
+            <div class="lead-header">
+              <strong>${l.nome_cliente || 'Cliente'}</strong>
+              <span class="badge badge-restrito">Em atendimento</span>
+            </div>
+            <div class="texto">${l.interesse ? `Interesse: ${l.interesse}` : 'Sem produto identificado'}</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">Já está sendo atendido por outro vendedor</div>
+          </div>
+        </div>
+      `;
+    }
+
     const badge = l.status === 'novo'
       ? `<span class="badge badge-novo">Novo</span>`
       : l.status === 'em_atendimento'
@@ -182,38 +204,39 @@ async function carregarLeads() {
 
     // Tempo de espera na FILA — destaca se passou de 5 min sem ser puxado (gargalo de fila)
     const minutosEsperando = Math.floor((Date.now() - new Date(l.criado_em + 'Z')) / 60000);
-    const gargaloFila = l.status === 'novo' && minutosEsperando >= 5;
+    let tempoHtml = '';
+    if (l.status === 'novo') {
+      const alerta = minutosEsperando >= 5;
+      tempoHtml = `<div class="${alerta ? 'alerta' : ''}" style="${alerta ? '' : 'font-size:12px; color:var(--muted); margin-top:6px;'}">
+        ${alerta ? '⚠️ ' : ''}Esperando há ${minutosEsperando} min${alerta ? ' — gargalo de fila' : ''}
+      </div>`;
+    }
 
     // Gargalo DURANTE o atendimento — cliente já foi pego por um vendedor,
     // mas a última mensagem foi dele (cliente) e o vendedor ainda não respondeu
-    let gargaloAtendimento = false;
-    let minutosSemResposta = 0;
+    let gargaloAtendimentoHtml = '';
     if (l.status === 'em_atendimento' && l.ultima_mensagem && l.ultima_mensagem.remetente === 'cliente') {
-      minutosSemResposta = Math.floor((Date.now() - new Date(l.ultima_mensagem.criado_em + 'Z')) / 60000);
-      gargaloAtendimento = minutosSemResposta >= 5;
+      const minutosSemResposta = Math.floor((Date.now() - new Date(l.ultima_mensagem.criado_em + 'Z')) / 60000);
+      if (minutosSemResposta >= 5) {
+        gargaloAtendimentoHtml = `<div class="alerta">⚠️ Cliente esperando resposta há ${minutosSemResposta} min — gargalo de atendimento</div>`;
+      }
     }
-    const temGargalo = gargaloFila || gargaloAtendimento;
 
-    // Linha única de metadados — origem + tempo/gargalo, pra não empilhar várias linhas por card
-    let metaHtml = `<span>${LABELS_ORIGEM[l.origem] || l.origem}</span>`;
-    if (gargaloFila) {
-      metaHtml += `<span class="alerta-inline">⚠️ esperando há ${minutosEsperando} min</span>`;
-    } else if (gargaloAtendimento) {
-      metaHtml += `<span class="alerta-inline">⚠️ cliente sem resposta há ${minutosSemResposta} min</span>`;
-    } else if (l.status === 'novo') {
-      metaHtml += `<span>· esperando há ${minutosEsperando} min</span>`;
-    }
+    const origemHtml = `<span class="origem-tag">Origem: ${l.origem}</span>`;
+    const temGargalo = (l.status === 'novo' && minutosEsperando >= 5) || gargaloAtendimentoHtml !== '';
 
     return `
       <div class="ticket-card ${temGargalo ? 'gargalo' : ''} lead-clicavel" onclick="abrirConversa(${l.id})">
-        <div class="ticket-number">${String(l.id).padStart(3, '0')}</div>
+        <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
         <div class="ticket-body">
           <div class="lead-header">
             <strong>${l.nome_cliente || l.telefone}</strong>
             ${badge}
           </div>
           <div class="texto">${l.primeira_mensagem}</div>
-          <div class="meta-linha">${metaHtml}</div>
+          ${origemHtml}
+          ${tempoHtml}
+          ${gargaloAtendimentoHtml}
           <div class="acao" onclick="event.stopPropagation()">${acao}</div>
         </div>
       </div>
@@ -369,6 +392,52 @@ function usarSugestaoTarefa(sugestao) {
 
 let leadEmEncerramento = null;
 
+function iniciais(nome) {
+  if (!nome) return '?';
+  const partes = nome.trim().split(/\s+/);
+  return (partes[0][0] + (partes[1] ? partes[1][0] : '')).toUpperCase();
+}
+
+async function carregarConversasAtivas() {
+  const res = await fetch(`${API}/api/leads?status=em_atendimento`);
+  if (res.status === 401) return window.location.href = '/login.html';
+  const leads = await res.json();
+
+  // Vendedor só vê as próprias; admin vê todas (a API já manda tudo pro admin,
+  // aqui só filtramos as "restrito" pra não aparecer preview de conversa alheia
+  // nesse painel específico — o vendedor não gerencia isso aqui, só a dele).
+  const visiveis = leads.filter(l => !l.restrito);
+  conversasAtivasCache = visiveis;
+
+  const el = document.getElementById('conversas-ativas');
+  if (visiveis.length === 0) {
+    el.innerHTML = `<div class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa ativa no momento.</div>`;
+    return;
+  }
+
+  // Mais recente primeiro, tipo WhatsApp
+  const ordenadas = [...visiveis].sort((a, b) => {
+    const ta = a.ultima_mensagem ? new Date(a.ultima_mensagem.criado_em) : new Date(a.criado_em);
+    const tb = b.ultima_mensagem ? new Date(b.ultima_mensagem.criado_em) : new Date(b.criado_em);
+    return tb - ta;
+  });
+
+  el.innerHTML = ordenadas.map(l => {
+    const nome = l.nome_cliente || l.telefone;
+    const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
+    const tagVendedor = usuarioAtual.role === 'admin' && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${l.vendedor_nome}</span>` : '';
+    return `
+      <div class="conversa-item" onclick="abrirConversa(${l.id})">
+        <div class="conversa-avatar">${iniciais(nome)}</div>
+        <div class="conversa-info">
+          <div class="conversa-nome"><span>${nome}</span>${tagVendedor}</div>
+          <div class="conversa-preview">${preview}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 function encerrarLead(leadId) {
   leadEmEncerramento = leadId;
   document.getElementById('enc-resultado').value = '';
@@ -453,8 +522,8 @@ function abrirNovaTarefa() {
   const ehAdmin = usuarioAtual.role === 'admin';
   // Admin pode criar tarefa em cima de qualquer lead em atendimento (não só os que ele mesmo puxou)
   const leadsDisponiveis = ehAdmin
-    ? leadsCache.filter(l => l.status === 'em_atendimento')
-    : leadsCache.filter(l => l.dono && l.status !== 'encerrado');
+    ? conversasAtivasCache
+    : conversasAtivasCache.filter(l => l.dono);
 
   if (leadsDisponiveis.length === 0) {
     selLead.innerHTML = `<option value="">Nenhum lead em atendimento no momento</option>`;
@@ -538,8 +607,7 @@ function metricasHtml(m) {
 }
 
 async function abrirRelatorio() {
-  const url = filtroDataAtual ? `${API}/api/relatorio?data=${filtroDataAtual}` : `${API}/api/relatorio`;
-  const res = await fetch(url);
+  const res = await fetch(`${API}/api/relatorio`);
   if (res.status === 401) return window.location.href = '/login.html';
   const r = await res.json();
 
@@ -596,51 +664,10 @@ async function puxarLead(leadId) {
   atualizarTudo();
 }
 
-// ---------------- Novo lead manual (carrinho abandonado / reativação) ----------------
-function abrirLeadManual() {
-  document.getElementById('lm-nome').value = '';
-  document.getElementById('lm-telefone').value = '';
-  document.getElementById('lm-interesse').value = '';
-  document.getElementById('lm-origem').value = 'carrinho_abandonado';
-  document.getElementById('lm-erro').style.display = 'none';
-  abrirModal('modal-lead-manual');
-}
-
-async function confirmarLeadManual() {
-  const erroEl = document.getElementById('lm-erro');
-  erroEl.style.display = 'none';
-
-  const nome_cliente = document.getElementById('lm-nome').value.trim();
-  const telefone = document.getElementById('lm-telefone').value.trim();
-  const interesse = document.getElementById('lm-interesse').value.trim();
-  const origem = document.getElementById('lm-origem').value;
-
-  if (!nome_cliente || !telefone || !interesse) {
-    erroEl.textContent = 'Preencha nome, telefone e intenção de compra.';
-    erroEl.style.display = 'block';
-    return;
-  }
-
-  const res = await fetch(`${API}/api/leads/manual`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nome_cliente, telefone, interesse, origem }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json();
-    erroEl.textContent = err.erro || 'Erro ao criar lead';
-    erroEl.style.display = 'block';
-    return;
-  }
-
-  fecharModal('modal-lead-manual');
-  atualizarTudo();
-}
-
 async function atualizarTudo() {
   await carregarVendedores();
   await carregarLeads();
+  await carregarConversasAtivas();
   await carregarLembretes();
 }
 
