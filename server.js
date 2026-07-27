@@ -79,7 +79,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 // ---------------------------------------------------------------
 // CADASTRO DE VENDEDOR (só admin)
 // ---------------------------------------------------------------
-app.post('/api/vendedores', requireAuth, requireGestor, (req, res) => {
+app.post('/api/vendedores', requireAuth, requireAdmin, (req, res) => {
   const { nome, login, senha, role } = req.body;
   if (!nome || !login || !senha) {
     return res.status(400).json({ erro: 'nome, login e senha são obrigatórios' });
@@ -276,7 +276,11 @@ app.get('/api/leads', requireAuth, (req, res) => {
       const vendedor = lead.vendedor_id
         ? db.prepare('SELECT nome FROM vendedores WHERE id = ?').get(lead.vendedor_id)
         : null;
-      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null };
+      // Mensagens do cliente desde a última vez que alguém abriu essa conversa
+      const naoLidas = lead.visto_em
+        ? db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente' AND criado_em > ?`).get(lead.id, lead.visto_em).n
+        : db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente'`).get(lead.id).n;
+      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas };
     }
 
     // Versão restrita: só dados mínimos
@@ -306,6 +310,12 @@ app.get('/api/leads/:id', requireAuth, (req, res) => {
   }
 
   const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(req.params.id);
+
+  // Marca como "visto agora" — zera o badge de não lida pra quem abriu
+  if (dono || ehGestor(req.usuario)) {
+    db.prepare(`UPDATE leads SET visto_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?`).run(req.params.id);
+  }
+
   res.json({ ...lead, mensagens, dono });
 });
 

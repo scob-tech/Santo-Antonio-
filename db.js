@@ -26,7 +26,7 @@ db.exec(`
     origem TEXT NOT NULL DEFAULT 'geral',       -- de qual ícone/página do site veio: produtos | duvidas | geral | ...
     status TEXT NOT NULL DEFAULT 'novo',      -- novo | em_atendimento | encerrado
     vendedor_id INTEGER,                       -- null até alguem puxar
-    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
     FOREIGN KEY (vendedor_id) REFERENCES vendedores(id)
   );
 
@@ -35,7 +35,7 @@ db.exec(`
     lead_id INTEGER NOT NULL,
     remetente TEXT NOT NULL,   -- 'cliente' | 'vendedor' | 'ia'
     texto TEXT NOT NULL,
-    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
     FOREIGN KEY (lead_id) REFERENCES leads(id)
   );
 
@@ -92,6 +92,11 @@ if (!colunaExiste('mensagens', 'midia_url')) {
 }
 if (!colunaExiste('mensagens', 'midia_tipo')) {
   db.exec(`ALTER TABLE mensagens ADD COLUMN midia_tipo TEXT`);
+}
+// marca quando o dono (ou gestor) abriu a conversa pela última vez —
+// alimenta o badge de "mensagem não lida" nas Conversas Ativas
+if (!colunaExiste('leads', 'visto_em')) {
+  db.exec(`ALTER TABLE leads ADD COLUMN visto_em TEXT`);
 }
 
 // ---------------------------------------------------------------
