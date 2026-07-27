@@ -58,6 +58,13 @@ function interpretarWebhook(body) {
   const messageId = body.messageId || null;
   const fromMe = Boolean(body.fromMe);
 
+  // Ignora mensagens de GRUPO — só conversa individual (1-a-1) vira lead.
+  // Sem isso, qualquer mensagem normal num grupo do WhatsApp onde o número
+  // esteja (mesmo sem ser sobre a loja) criaria um lead por engano.
+  if (body.isGroup) {
+    return { telefone: null, nomeCliente, texto: null, midiaUrl: null, midiaTipo: null, messageId, fromMe };
+  }
+
   let texto = null;
   let midiaUrl = null;
   let midiaTipo = null;
@@ -109,6 +116,16 @@ function interpretarWebhook(body) {
   return { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe };
 }
 
+// Rastreia messageIds das mensagens que NÓS mandamos via API — assim,
+// quando a Z-API notifica um evento "fromMe: true", conseguimos distinguir
+// entre (a) eco da nossa própria mensagem enviada pela API e (b) o vendedor
+// respondendo manualmente direto pelo WhatsApp no celular conectado.
+const mensagensEnviadasPorNos = new Set();
+function foiEnviadaPorNos(messageId) {
+  if (!messageId) return false;
+  return mensagensEnviadasPorNos.has(messageId);
+}
+
 // Manda uma mensagem de texto de verdade pro WhatsApp do cliente.
 // Não lança erro pro chamador — só loga — pra nunca travar o fluxo interno
 // (salvar no banco) por causa de uma falha externa da Z-API.
@@ -133,6 +150,14 @@ async function enviarMensagemWhatsapp(telefone, texto) {
       console.error(`>> Falha ao enviar mensagem via Z-API (status ${res.status}): ${erro}`);
       return { enviado: false, motivo: 'erro_zapi', status: res.status };
     }
+    const data = await res.json().catch(() => null);
+    if (data && data.messageId) {
+      mensagensEnviadasPorNos.add(data.messageId);
+      if (mensagensEnviadasPorNos.size > LIMITE_MEMORIA) {
+        const primeiro = mensagensEnviadasPorNos.values().next().value;
+        mensagensEnviadasPorNos.delete(primeiro);
+      }
+    }
     return { enviado: true };
   } catch (err) {
     console.error('>> Erro de rede ao chamar a Z-API:', err.message);
@@ -140,4 +165,49 @@ async function enviarMensagemWhatsapp(telefone, texto) {
   }
 }
 
-module.exports = { interpretarWebhook, enviarMensagemWhatsapp, jaProcessada, marcarProcessada, configurado };
+// Manda mídia (imagem, áudio, vídeo ou documento) de verdade pro WhatsApp
+// do cliente. Aceita tanto link quanto Base64 (a Z-API aceita os dois —
+// usamos Base64 aqui porque o arquivo vem direto do navegador do vendedor,
+// sem precisar hospedar em lugar nenhum antes).
+async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, legenda) {
+  if (!configurado) {
+    console.log(`>> [Z-API não configurada] mídia (${midiaTipo}) NÃO enviada de verdade pra ${telefone}`);
+    return { enviado: false, motivo: 'zapi_nao_configurada' };
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (ZAPI_CLIENT_TOKEN) headers['Client-Token'] = ZAPI_CLIENT_TOKEN;
+  const base = `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}`;
+
+  let url;
+  let body;
+  if (midiaTipo === 'imagem') {
+    url = `${base}/send-image`;
+    body = { phone: telefone, image: dataUri, caption: legenda || '' };
+  } else if (midiaTipo === 'audio') {
+    url = `${base}/send-audio`;
+    body = { phone: telefone, audio: dataUri };
+  } else if (midiaTipo === 'video') {
+    url = `${base}/send-video`;
+    body = { phone: telefone, video: dataUri, caption: legenda || '' };
+  } else {
+    const extensao = (nomeArquivo && nomeArquivo.includes('.')) ? nomeArquivo.split('.').pop() : 'pdf';
+    url = `${base}/send-document/${extensao}`;
+    body = { phone: telefone, document: dataUri, fileName: nomeArquivo || `arquivo.${extensao}` };
+  }
+
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+      const erro = await res.text().catch(() => '');
+      console.error(`>> Falha ao enviar mídia via Z-API (status ${res.status}): ${erro}`);
+      return { enviado: false, motivo: 'erro_zapi', status: res.status };
+    }
+    return { enviado: true };
+  } catch (err) {
+    console.error('>> Erro de rede ao enviar mídia pela Z-API:', err.message);
+    return { enviado: false, motivo: 'erro_rede' };
+  }
+}
+
+module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado };

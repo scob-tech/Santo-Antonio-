@@ -12,7 +12,7 @@ const agendador = require('./agendador');
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -374,8 +374,10 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
 
 // Vendedor envia mensagem pro cliente — só o dono do lead ou o admin
 app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
-  const { texto } = req.body;
-  if (!texto) return res.status(400).json({ erro: 'texto é obrigatório' });
+  const { texto, midia_base64, midia_tipo, midia_nome } = req.body;
+  if (!texto && !midia_base64) {
+    return res.status(400).json({ erro: 'texto ou anexo é obrigatório' });
+  }
 
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
@@ -385,10 +387,15 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode responder' });
   }
 
-  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'vendedor', ?)`)
-    .run(req.params.id, texto);
+  const rotulos = { imagem: '[Imagem]', audio: '[Áudio]', video: '[Vídeo]', documento: '[Documento]' };
+  const textoFinal = texto || `${rotulos[midia_tipo] || '[Anexo]'}${midia_nome ? ' ' + midia_nome : ''}`;
 
-  const envio = await zapi.enviarMensagemWhatsapp(lead.telefone, texto);
+  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
+    .run(req.params.id, textoFinal, midia_base64 || null, midia_tipo || null);
+
+  const envio = midia_base64
+    ? await zapi.enviarMidiaWhatsapp(lead.telefone, midia_tipo, midia_base64, midia_nome, texto)
+    : await zapi.enviarMensagemWhatsapp(lead.telefone, texto);
 
   res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado });
 });
