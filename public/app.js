@@ -16,6 +16,9 @@ function fecharModal(id) {
 function abrirModal(id) {
   document.getElementById(id).classList.add('aberto');
 }
+function ehGestor(usuario) {
+  return usuario && (usuario.role === 'admin' || usuario.role === 'supervisor');
+}
 
 async function checarSessao() {
   const res = await fetch(`${API}/api/me`);
@@ -30,21 +33,56 @@ async function checarSessao() {
 
 function renderizarUserBox() {
   const el = document.getElementById('user-box');
+  const rotulos = { admin: 'Administrador', supervisor: 'Supervisor', vendedor: 'Vendedor' };
   el.innerHTML = `
     <span class="user-nome">${usuarioAtual.nome}</span>
-    <span class="user-role">${usuarioAtual.role === 'admin' ? 'Administrador' : 'Vendedor'}</span>
+    <span class="user-role">${rotulos[usuarioAtual.role] || 'Vendedor'}</span>
     ${usuarioAtual.role === 'admin' ? `<button class="btn-secundario" onclick="abrirModalSenha(${usuarioAtual.id}, 'você')">🔑 Minha senha</button>` : ''}
     <button class="btn-secundario" onclick="sair()">Sair</button>
   `;
 
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
-  if (usuarioAtual.role === 'admin') {
+  if (ehGestor(usuarioAtual)) {
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
     };
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
+    document.getElementById('btn-limpar-demo').style.display = 'inline-block';
   }
+  if (usuarioAtual.role !== 'supervisor') {
+    document.getElementById('btn-relatorio').style.display = 'inline-block';
+  }
+}
+
+async function limparDadosDemo() {
+  if (!confirm('Isso apaga todos os leads e vendedores criados pela simulação de demonstração (bruno_demo, pedro_demo, e os leads deles). Dados reais não são afetados. Confirma?')) return;
+
+  const res = await fetch(`${API}/api/admin/limpar-demo`, { method: 'POST' });
+  const resultado = await res.json();
+
+  if (!res.ok) {
+    alert(resultado.erro || 'Erro ao limpar dados de demonstração');
+    return;
+  }
+
+  alert(`Limpo: ${resultado.leads_apagados} lead(s) e ${resultado.vendedores_demo_apagados} vendedor(es) demo removidos.`);
+  atualizarTudo();
+}
+
+async function excluirLeadAtual() {
+  if (!leadConversaAtual) return;
+  if (!confirm(`Excluir permanentemente o lead de ${leadConversaAtual.nome_cliente || leadConversaAtual.telefone}? Isso apaga toda a conversa e não pode ser desfeito.`)) return;
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao excluir lead');
+    return;
+  }
+
+  fecharModal('modal-conversa');
+  atualizarTudo();
 }
 
 let vendedorEmRedefinicao = null;
@@ -146,7 +184,7 @@ async function carregarVendedores() {
   el.innerHTML = vendedores.map(v => `
     <div class="side-card">
       <div class="vendedor-name" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>${v.nome}${v.role === 'admin' ? ' 👑' : ''}</span>
+        <span>${v.nome}${v.role === 'admin' ? ' 👑' : v.role === 'supervisor' ? ' 🛡️' : ''}</span>
         ${ehAdmin ? `<button class="link-mini" onclick="abrirModalSenha(${v.id}, '${v.nome.replace(/'/g, "\\'")}')">🔑 senha</button>` : ''}
       </div>
       <div class="vendedor-count">${v.leads_ativos} atendimento${v.leads_ativos === 1 ? '' : 's'} ativo${v.leads_ativos === 1 ? '' : 's'}</div>
@@ -309,16 +347,63 @@ function renderizarConversa(lead) {
   const sugestaoBox = document.getElementById('conversa-sugestao-tarefa');
   sugestaoBox.style.display = 'none';
   sugestaoBox.innerHTML = '';
+  document.getElementById('btn-excluir-lead').style.display = ehGestor(usuarioAtual) ? 'inline-block' : 'none';
+  removerAnexo();
+}
+
+let anexoSelecionado = null; // { dataUri, tipo, nome }
+
+function tipoDoArquivo(mime) {
+  if (mime.startsWith('image/')) return 'imagem';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  return 'documento';
+}
+
+function selecionarAnexo(event) {
+  const arquivo = event.target.files[0];
+  if (!arquivo) return;
+
+  if (arquivo.size > 15 * 1024 * 1024) {
+    alert('Arquivo muito grande (máximo 15MB).');
+    event.target.value = '';
+    return;
+  }
+
+  const leitor = new FileReader();
+  leitor.onload = () => {
+    anexoSelecionado = { dataUri: leitor.result, tipo: tipoDoArquivo(arquivo.type), nome: arquivo.name };
+    const preview = document.getElementById('conversa-anexo-preview');
+    preview.style.display = 'flex';
+    preview.innerHTML = `📎 ${arquivo.name} <button class="link-mini" onclick="removerAnexo()" style="margin-left:auto;">Remover</button>`;
+  };
+  leitor.readAsDataURL(arquivo);
+}
+
+function removerAnexo() {
+  anexoSelecionado = null;
+  document.getElementById('conversa-arquivo').value = '';
+  const preview = document.getElementById('conversa-anexo-preview');
+  preview.style.display = 'none';
+  preview.innerHTML = '';
 }
 
 async function enviarMensagemConversa() {
   const texto = document.getElementById('conversa-texto').value.trim();
-  if (!texto || !leadConversaAtual) return;
+  if (!texto && !anexoSelecionado) return;
+  if (!leadConversaAtual) return;
+
+  const corpo = { texto };
+  if (anexoSelecionado) {
+    corpo.midia_base64 = anexoSelecionado.dataUri;
+    corpo.midia_tipo = anexoSelecionado.tipo;
+    corpo.midia_nome = anexoSelecionado.nome;
+  }
 
   const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ texto }),
+    body: JSON.stringify(corpo),
   });
   if (!res.ok) {
     const err = await res.json();
@@ -326,6 +411,7 @@ async function enviarMensagemConversa() {
     return;
   }
 
+  removerAnexo();
   const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
   leadConversaAtual = atualizado;
   renderizarConversa(atualizado);
@@ -408,6 +494,12 @@ function usarSugestaoTarefa(sugestao) {
   document.getElementById('tarefa-lead').value = leadConversaAtual.id;
   document.getElementById('tarefa-titulo').value = sugestao.titulo || '';
   if (sugestao.tipo) document.getElementById('tarefa-tipo').value = sugestao.tipo;
+}
+
+function encerrarLeadDaConversa() {
+  if (!leadConversaAtual) return;
+  fecharModal('modal-conversa');
+  encerrarLead(leadConversaAtual.id);
 }
 
 let leadEmEncerramento = null;
@@ -698,9 +790,17 @@ async function atualizarConversaAberta() {
   const temAgora = atualizado.mensagens ? atualizado.mensagens.length : 0;
   if (temAgora !== tinhaAntes || atualizado.status !== leadConversaAtual.status) {
     const rascunho = document.getElementById('conversa-texto').value;
+    const anexoAtual = anexoSelecionado;
+    const previewAtual = document.getElementById('conversa-anexo-preview').innerHTML;
     leadConversaAtual = atualizado;
     renderizarConversa(atualizado);
     document.getElementById('conversa-texto').value = rascunho;
+    if (anexoAtual) {
+      anexoSelecionado = anexoAtual;
+      const preview = document.getElementById('conversa-anexo-preview');
+      preview.style.display = 'flex';
+      preview.innerHTML = previewAtual;
+    }
   }
 }
 

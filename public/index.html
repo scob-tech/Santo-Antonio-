@@ -321,8 +321,9 @@
       <div class="sub">Central de Atendimento · Fila de Leads WhatsApp</div>
     </div>
     <div class="header-actions">
-      <button class="btn-secundario" onclick="abrirRelatorio()">📊 Relatório do dia</button>
+      <button class="btn-secundario" id="btn-relatorio" onclick="abrirRelatorio()" style="display:none;">📊 Relatório do dia</button>
       <button class="btn-secundario" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Rodar análise diária</button>
+      <button class="btn-secundario" id="btn-limpar-demo" onclick="limparDadosDemo()" style="display:none;">🗑️ Limpar demo</button>
     </div>
     <div class="user-box" id="user-box"></div>
   </header>
@@ -348,6 +349,7 @@
           <label for="c-role">Nível de acesso</label>
           <select id="c-role">
             <option value="vendedor">Vendedor</option>
+            <option value="supervisor">Supervisor (vê e responde tudo, sem senha/relatório)</option>
             <option value="admin">Administrador</option>
           </select>
           <button style="margin-top:12px; width:100%;" onclick="cadastrarVendedor()">Salvar</button>
@@ -481,14 +483,21 @@
         <button style="width:100%;" onclick="puxarLeadDaConversa()">Pegar este lead pra responder</button>
       </div>
       <div id="conversa-caixa-resposta" style="display:none; margin-top:10px; flex-direction:column; gap:6px;">
-        <button class="link-mini" onclick="sugerirTarefaIA()" style="align-self:flex-start;">🤖 Sugerir tarefa (lê a conversa)</button>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <button class="link-mini" onclick="sugerirTarefaIA()">🤖 Sugerir tarefa (lê a conversa)</button>
+          <button class="link-mini" onclick="encerrarLeadDaConversa()">Encerrar atendimento</button>
+        </div>
+        <div id="conversa-anexo-preview" style="display:none; align-items:center; gap:8px; background:var(--bg); padding:6px 10px; border-radius:6px; font-size:12px;"></div>
         <div style="display:flex; gap:8px;">
+          <button type="button" title="Anexar arquivo" onclick="document.getElementById('conversa-arquivo').click()" style="flex-shrink:0; padding:8px 10px;">📎</button>
+          <input type="file" id="conversa-arquivo" style="display:none;" onchange="selecionarAnexo(event)" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx" />
           <input type="text" id="conversa-texto" placeholder="Escreva uma mensagem..." style="flex:1; padding:8px 9px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px;" onkeydown="if(event.key==='Enter') enviarMensagemConversa();" />
           <button onclick="enviarMensagemConversa()">Enviar</button>
         </div>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
         <button class="cancelar" onclick="fecharModal('modal-conversa')" style="flex:1;">Fechar</button>
+        <button class="cancelar" id="btn-excluir-lead" onclick="excluirLeadAtual()" style="display:none; color:var(--red); flex:0;">🗑️ Excluir</button>
       </div>
     </div>
   </div>
