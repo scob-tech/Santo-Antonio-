@@ -9,7 +9,12 @@ const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 const auth = require('./auth');
 
-const db = new DatabaseSync(path.join(__dirname, 'data.sqlite'));
+// Em produção (Railway), DATA_DIR aponta pro Volume permanente conectado
+// ao serviço — sem isso, o banco vive no disco do container e some a
+// cada redeploy. Localmente, sem a variável, continua salvando do lado
+// do server.js como sempre foi.
+const dataDir = process.env.DATA_DIR || __dirname;
+const db = new DatabaseSync(path.join(dataDir, 'data.sqlite'));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS vendedores (
