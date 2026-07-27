@@ -611,7 +611,7 @@ function calcularRelatorio(dataISO, filtroVendedorId) {
 
 // Excluir um lead (e tudo ligado a ele) — só admin. Útil pra limpar dado de
 // teste/demonstração, ou remover um lead criado por engano.
-app.delete('/api/leads/:id', requireAuth, requireGestor, (req, res) => {
+app.delete('/api/leads/:id', requireAuth, requireAdmin, (req, res) => {
   const lead = db.prepare('SELECT id FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
@@ -626,6 +626,9 @@ app.delete('/api/leads/:id', requireAuth, requireGestor, (req, res) => {
 // (scripts/simulate-demo.js) — leads dos vendedores "*_demo" e os próprios
 // vendedores demo. Não mexe em nenhum dado real. Só admin.
 app.post('/api/admin/limpar-demo', requireAuth, requireGestor, (req, res) => {
+  if (req.usuario.login !== 'admin') {
+    return res.status(403).json({ erro: 'ação restrita à conta de desenvolvedor' });
+  }
   const vendedoresDemo = db.prepare(`SELECT id FROM vendedores WHERE login LIKE '%\\_demo' ESCAPE '\\'`).all();
   const idsVendedoresDemo = vendedoresDemo.map((v) => v.id);
 

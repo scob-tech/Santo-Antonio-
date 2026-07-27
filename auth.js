@@ -24,12 +24,12 @@ function verificarSenha(senha, armazenado) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-// token -> { id, nome, role }
+// token -> { id, nome, role, login }
 const sessoes = new Map();
 
 function criarSessao(usuario) {
   const token = crypto.randomUUID();
-  sessoes.set(token, { id: usuario.id, nome: usuario.nome, role: usuario.role });
+  sessoes.set(token, { id: usuario.id, nome: usuario.nome, role: usuario.role, login: usuario.login });
   return token;
 }
 
