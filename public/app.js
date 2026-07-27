@@ -45,11 +45,13 @@ function renderizarUserBox() {
   `;
 
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
-  if (ehGestor(usuarioAtual)) {
+  if (usuarioAtual.role === 'admin') {
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
     };
+  }
+  if (ehGestor(usuarioAtual)) {
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
   }
   // "Limpar demo" fica exclusivo da conta de desenvolvedor (login "admin"),
@@ -344,7 +346,7 @@ function renderizarConversa(lead) {
   const claimBox = document.getElementById('conversa-acao-claim');
   const respostaBox = document.getElementById('conversa-caixa-resposta');
 
-  if (lead.dono || usuarioAtual.role === 'admin') {
+  if (lead.dono || ehGestor(usuarioAtual)) {
     respostaBox.style.display = lead.status === 'encerrado' ? 'none' : 'flex';
     claimBox.style.display = 'none';
   } else if (lead.status === 'novo') {
@@ -596,14 +598,17 @@ async function carregarConversasAtivas() {
   el.innerHTML = ordenadas.map(l => {
     const nome = l.nome_cliente || l.telefone;
     const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
-    const tagVendedor = usuarioAtual.role === 'admin' && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${l.vendedor_nome}</span>` : '';
+    const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${l.vendedor_nome}</span>` : '';
+    const naoLidas = l.nao_lidas || 0;
+    const badge = naoLidas > 0 ? `<span class="conversa-badge">${naoLidas > 9 ? '9+' : naoLidas}</span>` : '';
     return `
-      <div class="conversa-item" onclick="abrirConversa(${l.id})">
+      <div class="conversa-item ${naoLidas > 0 ? 'nao-lida' : ''}" onclick="abrirConversa(${l.id})">
         <div class="conversa-avatar">${iniciais(nome)}</div>
         <div class="conversa-info">
           <div class="conversa-nome"><span>${nome}</span>${tagVendedor}</div>
           <div class="conversa-preview">${preview}</div>
         </div>
+        ${badge}
       </div>
     `;
   }).join('');
@@ -690,8 +695,8 @@ function abrirNovaTarefa() {
   const campoVendedor = document.getElementById('tarefa-campo-vendedor');
   const selVendedor = document.getElementById('tarefa-vendedor');
 
-  const ehAdmin = usuarioAtual.role === 'admin';
-  // Admin pode criar tarefa em cima de qualquer lead em atendimento (não só os que ele mesmo puxou)
+  const ehAdmin = ehGestor(usuarioAtual);
+  // Admin/supervisor podem criar tarefa em cima de qualquer lead em atendimento (não só os que puxaram)
   const leadsDisponiveis = ehAdmin
     ? conversasAtivasCache
     : conversasAtivasCache.filter(l => l.dono);
@@ -728,7 +733,7 @@ async function confirmarTarefa() {
   const titulo = document.getElementById('tarefa-titulo').value.trim();
   const tipo = document.getElementById('tarefa-tipo').value;
   const quandoLocal = document.getElementById('tarefa-quando').value;
-  const vendedor_id = usuarioAtual.role === 'admin' ? document.getElementById('tarefa-vendedor').value : undefined;
+  const vendedor_id = ehGestor(usuarioAtual) ? document.getElementById('tarefa-vendedor').value : undefined;
 
   if (!lead_id || !titulo || !quandoLocal) {
     erroEl.textContent = 'Preencha lead, o que fazer e quando.';
