@@ -46,6 +46,8 @@ function renderizarUserBox() {
 
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
   if (usuarioAtual.role === 'admin') {
+    document.getElementById('painel-vendedores').style.display = 'block';
+    document.getElementById('filtro-data-fila').style.display = 'inline-block';
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
@@ -198,7 +200,7 @@ async function carregarVendedores() {
     <div class="side-card">
       <div class="vendedor-name" style="display:flex; justify-content:space-between; align-items:center;">
         <span>${v.nome}${v.role === 'admin' ? ' 👑' : v.role === 'supervisor' ? ' 🛡️' : ''}</span>
-        ${ehAdmin ? `<button class="link-mini" onclick="abrirModalSenha(${v.id}, '${v.nome.replace(/'/g, "\\'")}')">🔑 senha</button>` : ''}
+        ${ehAdmin ? `<span style="display:flex; gap:8px;"><button class="link-mini" onclick="abrirEdicaoCadastro(${v.id})">✏️</button><button class="link-mini" onclick="abrirModalSenha(${v.id}, '${v.nome.replace(/'/g, "\\'")}')">🔑</button></span>` : ''}
       </div>
       <div class="vendedor-count">${v.leads_ativos} atendimento${v.leads_ativos === 1 ? '' : 's'} ativo${v.leads_ativos === 1 ? '' : 's'}</div>
     </div>
@@ -207,7 +209,12 @@ async function carregarVendedores() {
 }
 
 async function carregarLeads() {
-  const res = await fetch(`${API}/api/leads?status=novo`);
+  let url = `${API}/api/leads?status=novo`;
+  const filtroData = document.getElementById('filtro-data-fila');
+  if (usuarioAtual.role === 'admin' && filtroData && filtroData.value) {
+    url += `&data=${filtroData.value}`;
+  }
+  const res = await fetch(url);
   if (res.status === 401) return window.location.href = '/login.html';
   const leads = await res.json();
   leadsCache = leads;
@@ -493,40 +500,6 @@ async function puxarLeadDaConversa() {
   atualizarTudo();
 }
 
-async function sugerirEncerramentoIA() {
-  if (!leadEmEncerramento) return;
-  const statusEl = document.getElementById('enc-ia-status');
-  statusEl.style.display = 'block';
-  statusEl.style.color = 'var(--navy)';
-  statusEl.textContent = 'Lendo a conversa...';
-
-  const res = await fetch(`${API}/api/leads/${leadEmEncerramento}/sugestao-encerramento`);
-  const sugestao = await res.json();
-
-  if (!res.ok) {
-    statusEl.style.color = 'var(--red)';
-    statusEl.textContent = sugestao.erro || 'Não consegui sugerir agora.';
-    return;
-  }
-
-  if (sugestao.resultado_sugerido === 'convertido' || sugestao.resultado_sugerido === 'perdido') {
-    document.getElementById('enc-resultado').value = sugestao.resultado_sugerido;
-    alternarCamposEncerrar();
-    if (sugestao.resultado_sugerido === 'convertido' && sugestao.valor_sugerido) {
-      document.getElementById('enc-valor').value = sugestao.valor_sugerido;
-    }
-    if (sugestao.resultado_sugerido === 'perdido' && sugestao.motivo_perda_sugerido) {
-      document.getElementById('enc-motivo').value = 'outro';
-      document.getElementById('enc-motivo-outro-box').style.display = 'block';
-      document.getElementById('enc-motivo-outro').value = sugestao.motivo_perda_sugerido;
-    }
-  }
-
-  const confiancaLabel = { alta: 'confiança alta', media: 'confiança média', baixa: 'confiança baixa' }[sugestao.confianca] || '';
-  statusEl.style.color = 'var(--navy)';
-  statusEl.textContent = `🤖 ${sugestao.resumo || 'Sugestão aplicada'} (${confiancaLabel || 'confira antes de confirmar'})`;
-}
-
 async function sugerirTarefaIA() {
   if (!leadConversaAtual) return;
   const box = document.getElementById('conversa-sugestao-tarefa');
@@ -557,13 +530,143 @@ function usarSugestaoTarefa(sugestao) {
   if (sugestao.tipo) document.getElementById('tarefa-tipo').value = sugestao.tipo;
 }
 
-function encerrarLeadDaConversa() {
+// Encerrar agora é 1 clique só — a IA lê a conversa na análise diária e
+// decide sozinha se converteu/perdeu, sem perguntar nada aqui.
+async function encerrarLeadDaConversa() {
   if (!leadConversaAtual) return;
+  if (!confirm(`Encerrar o atendimento de ${leadConversaAtual.nome_cliente || leadConversaAtual.telefone}?`)) return;
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/encerrar`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao encerrar');
+    return;
+  }
+
   fecharModal('modal-conversa');
-  encerrarLead(leadConversaAtual.id);
+  atualizarTudo();
 }
 
-let leadEmEncerramento = null;
+// ---------------- Novo lead manual ----------------
+function abrirNovoLeadManual() {
+  document.getElementById('nl-nome').value = '';
+  document.getElementById('nl-telefone').value = '';
+  document.getElementById('nl-observacao').value = '';
+  document.getElementById('nl-erro').style.display = 'none';
+  abrirModal('modal-novo-lead');
+}
+
+async function confirmarNovoLeadManual() {
+  const nome_cliente = document.getElementById('nl-nome').value.trim();
+  const telefone = document.getElementById('nl-telefone').value.trim();
+  const observacao = document.getElementById('nl-observacao').value.trim();
+  const erroEl = document.getElementById('nl-erro');
+  erroEl.style.display = 'none';
+
+  if (!telefone) {
+    erroEl.textContent = 'Informe o telefone.';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  const res = await fetch(`${API}/api/leads/manual`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telefone, nome_cliente, observacao }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    erroEl.textContent = err.erro || 'Erro ao salvar';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  fecharModal('modal-novo-lead');
+  atualizarTudo();
+}
+
+// ---------------- Transferir atendimento ----------------
+function abrirTransferir() {
+  if (!leadConversaAtual) return;
+  const sel = document.getElementById('tr-vendedor');
+  const outros = vendedoresCache.filter(v => v.id !== usuarioAtual.id && v.role !== 'admin');
+  sel.innerHTML = outros.length > 0
+    ? outros.map(v => `<option value="${v.id}">${v.nome}</option>`).join('')
+    : `<option value="">Nenhum outro vendedor cadastrado</option>`;
+  document.getElementById('tr-erro').style.display = 'none';
+  abrirModal('modal-transferir');
+}
+
+async function confirmarTransferencia() {
+  const novo_vendedor_id = document.getElementById('tr-vendedor').value;
+  const erroEl = document.getElementById('tr-erro');
+  if (!novo_vendedor_id) {
+    erroEl.textContent = 'Selecione pra quem transferir.';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/transferir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ novo_vendedor_id }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    erroEl.textContent = err.erro || 'Erro ao transferir';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  fecharModal('modal-transferir');
+  fecharModal('modal-conversa');
+  atualizarTudo();
+}
+
+// ---------------- Busca de conversas ----------------
+let buscaTimeout = null;
+function filtrarConversas(termo) {
+  clearTimeout(buscaTimeout);
+  buscaTimeout = setTimeout(() => carregarConversasAtivas(termo.trim()), 300);
+}
+
+// ---------------- Editar cadastro (admin) ----------------
+let vendedorEmEdicao = null;
+function abrirEdicaoCadastro(vendedorId) {
+  const v = vendedoresCache.find(x => x.id === vendedorId);
+  if (!v) return;
+  vendedorEmEdicao = vendedorId;
+  document.getElementById('ec-nome').value = v.nome;
+  document.getElementById('ec-login').value = v.login || '';
+  document.getElementById('ec-role').value = v.role;
+  document.getElementById('ec-erro').style.display = 'none';
+  abrirModal('modal-editar-cadastro');
+}
+
+async function confirmarEdicaoCadastro() {
+  const nome = document.getElementById('ec-nome').value.trim();
+  const login = document.getElementById('ec-login').value.trim();
+  const role = document.getElementById('ec-role').value;
+  const erroEl = document.getElementById('ec-erro');
+
+  const res = await fetch(`${API}/api/vendedores/${vendedorEmEdicao}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome, login, role }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    erroEl.textContent = err.erro || 'Erro ao salvar';
+    erroEl.style.display = 'block';
+    return;
+  }
+
+  fecharModal('modal-editar-cadastro');
+  carregarVendedores();
+}
 
 function iniciais(nome) {
   if (!nome) return '?';
@@ -571,25 +674,28 @@ function iniciais(nome) {
   return (partes[0][0] + (partes[1] ? partes[1][0] : '')).toUpperCase();
 }
 
-async function carregarConversasAtivas() {
-  const res = await fetch(`${API}/api/leads?status=em_atendimento`);
-  if (res.status === 401) return window.location.href = '/login.html';
-  const leads = await res.json();
+async function carregarConversasAtivas(termoBusca) {
+  let leads;
+  if (termoBusca && termoBusca.length >= 2) {
+    const res = await fetch(`${API}/api/leads/buscar?q=${encodeURIComponent(termoBusca)}`);
+    if (res.status === 401) return window.location.href = '/login.html';
+    leads = await res.json();
+  } else {
+    const res = await fetch(`${API}/api/leads?status=em_atendimento,encerrado`);
+    if (res.status === 401) return window.location.href = '/login.html';
+    const todos = await res.json();
+    leads = todos.filter(l => !l.restrito);
+  }
 
-  // Vendedor só vê as próprias; admin vê todas (a API já manda tudo pro admin,
-  // aqui só filtramos as "restrito" pra não aparecer preview de conversa alheia
-  // nesse painel específico — o vendedor não gerencia isso aqui, só a dele).
-  const visiveis = leads.filter(l => !l.restrito);
-  conversasAtivasCache = visiveis;
+  conversasAtivasCache = leads.filter(l => l.status !== 'encerrado');
 
   const el = document.getElementById('conversas-ativas');
-  if (visiveis.length === 0) {
-    el.innerHTML = `<div class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa ativa no momento.</div>`;
+  if (leads.length === 0) {
+    el.innerHTML = `<div class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa ativa no momento.'}</div>`;
     return;
   }
 
-  // Mais recente primeiro, tipo WhatsApp
-  const ordenadas = [...visiveis].sort((a, b) => {
+  const ordenadas = [...leads].sort((a, b) => {
     const ta = a.ultima_mensagem ? new Date(a.ultima_mensagem.criado_em) : new Date(a.criado_em);
     const tb = b.ultima_mensagem ? new Date(b.ultima_mensagem.criado_em) : new Date(b.criado_em);
     return tb - ta;
@@ -601,92 +707,18 @@ async function carregarConversasAtivas() {
     const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${l.vendedor_nome}</span>` : '';
     const naoLidas = l.nao_lidas || 0;
     const badge = naoLidas > 0 ? `<span class="conversa-badge">${naoLidas > 9 ? '9+' : naoLidas}</span>` : '';
+    const encerradaTag = l.status === 'encerrado' ? `<span class="conversa-vendedor-tag" style="color:var(--muted);">Encerrado</span>` : '';
     return `
-      <div class="conversa-item ${naoLidas > 0 ? 'nao-lida' : ''}" onclick="abrirConversa(${l.id})">
+      <div class="conversa-item ${naoLidas > 0 ? 'nao-lida' : ''} ${l.status === 'encerrado' ? 'encerrada' : ''}" onclick="abrirConversa(${l.id})">
         <div class="conversa-avatar">${iniciais(nome)}</div>
         <div class="conversa-info">
-          <div class="conversa-nome"><span>${nome}</span>${tagVendedor}</div>
+          <div class="conversa-nome"><span>${nome}</span>${tagVendedor}${encerradaTag}</div>
           <div class="conversa-preview">${preview}</div>
         </div>
         ${badge}
       </div>
     `;
   }).join('');
-}
-
-function encerrarLead(leadId) {
-  leadEmEncerramento = leadId;
-  document.getElementById('enc-resultado').value = '';
-  document.getElementById('enc-valor').value = '';
-  document.getElementById('enc-motivo-outro').value = '';
-  document.getElementById('enc-campo-valor').style.display = 'none';
-  document.getElementById('enc-campo-motivo').style.display = 'none';
-  document.getElementById('enc-erro').style.display = 'none';
-  document.getElementById('enc-ia-status').style.display = 'none';
-  abrirModal('modal-encerrar');
-}
-
-function alternarCamposEncerrar() {
-  const resultado = document.getElementById('enc-resultado').value;
-  document.getElementById('enc-campo-valor').style.display = resultado === 'convertido' ? 'block' : 'none';
-  document.getElementById('enc-campo-motivo').style.display = resultado === 'perdido' ? 'block' : 'none';
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  const motivoSel = document.getElementById('enc-motivo');
-  if (motivoSel) {
-    motivoSel.addEventListener('change', () => {
-      document.getElementById('enc-motivo-outro-box').style.display = motivoSel.value === 'outro' ? 'block' : 'none';
-    });
-  }
-});
-
-async function confirmarEncerrar() {
-  const resultado = document.getElementById('enc-resultado').value;
-  const erroEl = document.getElementById('enc-erro');
-  erroEl.style.display = 'none';
-
-  if (!resultado) {
-    erroEl.textContent = 'Selecione o resultado.';
-    erroEl.style.display = 'block';
-    return;
-  }
-
-  const body = { resultado };
-  if (resultado === 'convertido') {
-    const valor = document.getElementById('enc-valor').value;
-    if (!valor) {
-      erroEl.textContent = 'Informe o valor da venda.';
-      erroEl.style.display = 'block';
-      return;
-    }
-    body.valor_venda = valor;
-  } else {
-    const motivoSel = document.getElementById('enc-motivo').value;
-    const motivo = motivoSel === 'outro' ? document.getElementById('enc-motivo-outro').value.trim() : motivoSel;
-    if (!motivo) {
-      erroEl.textContent = 'Descreva o motivo da perda.';
-      erroEl.style.display = 'block';
-      return;
-    }
-    body.motivo_perda = motivo;
-  }
-
-  const res = await fetch(`${API}/api/leads/${leadEmEncerramento}/encerrar`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const err = await res.json();
-    erroEl.textContent = err.erro || 'Erro ao encerrar';
-    erroEl.style.display = 'block';
-    return;
-  }
-
-  fecharModal('modal-encerrar');
-  atualizarTudo();
 }
 
 // ---------------- Nova tarefa (agenda) ----------------

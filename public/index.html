@@ -314,6 +314,7 @@
 
   .conversa-item.nao-lida { border-color: var(--green); background: var(--green-bg); }
   .conversa-item.nao-lida .conversa-preview { color: var(--text); font-weight: 600; }
+  .conversa-item.encerrada { opacity: 0.6; }
   .conversa-badge {
     background: var(--green); color: white; font-size: 11px; font-weight: 700;
     min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center;
@@ -391,35 +392,44 @@
   <main>
     <div class="grid">
       <div>
-        <div class="panel-title">Fila de atendimento</div>
+        <div class="panel-title">
+          <span>Fila de atendimento</span>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <input type="date" id="filtro-data-fila" style="display:none; font-size:12px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" onchange="carregarLeads()" />
+            <button class="link-mini" onclick="abrirNovoLeadManual()">+ Novo Lead</button>
+          </div>
+        </div>
         <div id="leads"></div>
       </div>
       <div>
-        <div class="panel-title">
-          <span>Vendedores</span>
-          <button class="link-mini" id="btn-toggle-cadastro" style="display:none;">+ Cadastrar</button>
+        <div id="painel-vendedores" style="display:none;">
+          <div class="panel-title">
+            <span>Vendedores</span>
+            <button class="link-mini" id="btn-toggle-cadastro" style="display:none;">+ Cadastrar</button>
+          </div>
+          <div class="cadastro-form" id="cadastro-form">
+            <label for="c-nome">Nome</label>
+            <input type="text" id="c-nome" />
+            <label for="c-login">Login</label>
+            <input type="text" id="c-login" />
+            <label for="c-senha">Senha</label>
+            <input type="password" id="c-senha" />
+            <label for="c-role">Nível de acesso</label>
+            <select id="c-role">
+              <option value="vendedor">Vendedor</option>
+              <option value="supervisor">Supervisor (vê e responde tudo, sem senha/relatório)</option>
+              <option value="admin">Administrador</option>
+            </select>
+            <button style="margin-top:12px; width:100%;" onclick="cadastrarVendedor()">Salvar</button>
+            <div class="msg" id="cadastro-msg"></div>
+          </div>
+          <div id="vendedores"></div>
         </div>
-        <div class="cadastro-form" id="cadastro-form">
-          <label for="c-nome">Nome</label>
-          <input type="text" id="c-nome" />
-          <label for="c-login">Login</label>
-          <input type="text" id="c-login" />
-          <label for="c-senha">Senha</label>
-          <input type="password" id="c-senha" />
-          <label for="c-role">Nível de acesso</label>
-          <select id="c-role">
-            <option value="vendedor">Vendedor</option>
-            <option value="supervisor">Supervisor (vê e responde tudo, sem senha/relatório)</option>
-            <option value="admin">Administrador</option>
-          </select>
-          <button style="margin-top:12px; width:100%;" onclick="cadastrarVendedor()">Salvar</button>
-          <div class="msg" id="cadastro-msg"></div>
-        </div>
-        <div id="vendedores"></div>
 
         <div class="panel-title" style="margin-top:20px;">
           <span>Conversas Ativas</span>
         </div>
+        <input type="text" id="busca-conversas" placeholder="🔍 Buscar por nome ou telefone..." style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; margin-bottom:10px; box-sizing:border-box;" oninput="filtrarConversas(this.value)" />
         <div id="conversas-ativas"></div>
 
         <div class="panel-title" style="margin-top:20px;">
@@ -430,6 +440,61 @@
       </div>
     </div>
   </main>
+
+  <!-- Modal: novo lead manual -->
+  <div class="modal-overlay" id="modal-novo-lead">
+    <div class="modal-box">
+      <h3>Novo lead manual</h3>
+      <p style="font-size:12px; color:var(--muted); margin-top:0;">Cliente que veio por outro canal (telefone, presencial). Fica registrado como nota — não manda mensagem nenhuma pro WhatsApp sozinho.</p>
+      <label for="nl-nome">Nome do cliente</label>
+      <input type="text" id="nl-nome" />
+      <label for="nl-telefone">Telefone (com DDD)</label>
+      <input type="text" id="nl-telefone" placeholder="11999998888" />
+      <label for="nl-observacao">O que aconteceu</label>
+      <input type="text" id="nl-observacao" placeholder="Ex: ligou perguntando sobre cimento" />
+      <div class="modal-erro" id="nl-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-novo-lead')">Cancelar</button>
+        <button onclick="confirmarNovoLeadManual()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: transferir atendimento -->
+  <div class="modal-overlay" id="modal-transferir">
+    <div class="modal-box">
+      <h3>Transferir atendimento</h3>
+      <label for="tr-vendedor">Transferir pra</label>
+      <select id="tr-vendedor"></select>
+      <div class="modal-erro" id="tr-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-transferir')">Cancelar</button>
+        <button onclick="confirmarTransferencia()">Transferir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: editar cadastro (admin) -->
+  <div class="modal-overlay" id="modal-editar-cadastro">
+    <div class="modal-box">
+      <h3>Editar cadastro</h3>
+      <label for="ec-nome">Nome</label>
+      <input type="text" id="ec-nome" />
+      <label for="ec-login">Login</label>
+      <input type="text" id="ec-login" />
+      <label for="ec-role">Nível de acesso</label>
+      <select id="ec-role">
+        <option value="vendedor">Vendedor</option>
+        <option value="supervisor">Supervisor</option>
+        <option value="admin">Administrador</option>
+      </select>
+      <div class="modal-erro" id="ec-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-editar-cadastro')">Cancelar</button>
+        <button onclick="confirmarEdicaoCadastro()">Salvar</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal: redefinir senha (admin) -->
   <div class="modal-overlay" id="modal-senha">
@@ -543,8 +608,9 @@
         <button style="width:100%;" onclick="puxarLeadDaConversa()">Pegar este lead pra responder</button>
       </div>
       <div id="conversa-caixa-resposta" style="display:none; margin-top:10px; flex-direction:column; gap:6px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
           <button class="link-mini" onclick="sugerirTarefaIA()">🤖 Sugerir tarefa (lê a conversa)</button>
+          <button class="link-mini" onclick="abrirTransferir()">Transferir</button>
           <button class="link-mini" onclick="encerrarLeadDaConversa()">Encerrar atendimento</button>
         </div>
         <div id="conversa-anexo-preview" style="display:none; align-items:center; gap:8px; background:var(--bg); padding:6px 10px; border-radius:6px; font-size:12px;"></div>
