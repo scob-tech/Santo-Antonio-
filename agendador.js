@@ -38,6 +38,40 @@ async function rodarAnaliseDiaria() {
 
   const quando = amanha8hISO();
   let tarefasCriadas = 0;
+  let encerradosAnalisados = 0;
+
+  // 0) Conversas ENCERRADAS ainda sem resultado definido: a IA lê e decide
+  // sozinha se converteu/perdeu, valor e motivo — sem confirmação humana
+  // (decisão explícita do Silvio, com o trade-off já discutido: agiliza o
+  // encerramento no dia a dia, mas confia no julgamento da IA pro dado
+  // financeiro do relatório).
+  const encerradosPendentes = db.prepare(`SELECT * FROM leads WHERE status = 'encerrado' AND resultado IS NULL`).all();
+  for (const lead of encerradosPendentes) {
+    const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id);
+    if (mensagens.length === 0) continue;
+
+    const analise = await claudeIA.analisarConversa(mensagens);
+    encerradosAnalisados++;
+    if (!analise || !analise.resultado_sugerido) continue;
+
+    if (analise.resultado_sugerido === 'convertido') {
+      db.prepare(`UPDATE leads SET resultado = 'convertido', valor_venda = ? WHERE id = ?`)
+        .run(analise.valor_sugerido || 0, lead.id);
+      if (lead.vendedor_id) {
+        const daqui3dias = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+        db.prepare(`
+          INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
+          VALUES (?, ?, ?, ?, 'pos_venda')
+        `).run(lead.id, lead.vendedor_id, `🤖 Pós-venda — confirmar se ${lead.nome_cliente || lead.telefone} recebeu tudo certo`, daqui3dias);
+      }
+    } else if (analise.resultado_sugerido === 'perdido') {
+      db.prepare(`UPDATE leads SET resultado = 'perdido', motivo_perda = ? WHERE id = ?`)
+        .run(analise.motivo_perda_sugerido || 'não identificado pela IA', lead.id);
+    } else {
+      // "indefinido" — marca assim mesmo, pra não ficar reanalisando pra sempre
+      db.prepare(`UPDATE leads SET resultado = 'indefinido' WHERE id = ?`).run(lead.id);
+    }
+  }
 
   // 1) Conversas em aberto: IA procura gargalo + oportunidade de complementar
   const leadsAbertos = db.prepare(`SELECT * FROM leads WHERE status = 'em_atendimento'`).all();
@@ -86,8 +120,8 @@ async function rodarAnaliseDiaria() {
     }
   }
 
-  console.log(`>> Análise diária concluída: ${leadsAbertos.length} conversas revisadas, ${tarefasCriadas} tarefa(s) criada(s).`);
-  return { rodou: true, conversas_revisadas: leadsAbertos.length, tarefas_criadas: tarefasCriadas };
+  console.log(`>> Análise diária concluída: ${leadsAbertos.length} conversas em aberto revisadas, ${encerradosAnalisados} encerrada(s) classificada(s), ${tarefasCriadas} tarefa(s) criada(s).`);
+  return { rodou: true, conversas_revisadas: leadsAbertos.length, encerrados_analisados: encerradosAnalisados, tarefas_criadas: tarefasCriadas };
 }
 
 // Verifica a cada 5 minutos se já são 18h (BRT) e ainda não rodou hoje.

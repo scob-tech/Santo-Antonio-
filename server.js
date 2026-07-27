@@ -124,6 +124,26 @@ app.post('/api/vendedores/:id/redefinir-senha', requireAuth, requireAdmin, (req,
   res.json({ ok: true });
 });
 
+// Admin edita nome, login ou nível de acesso de qualquer conta.
+app.patch('/api/vendedores/:id', requireAuth, requireAdmin, (req, res) => {
+  const { nome, login, role } = req.body;
+
+  const vendedor = db.prepare('SELECT * FROM vendedores WHERE id = ?').get(req.params.id);
+  if (!vendedor) return res.status(404).json({ erro: 'vendedor não encontrado' });
+
+  if (login && login !== vendedor.login) {
+    const emUso = db.prepare('SELECT id FROM vendedores WHERE login = ? AND id != ?').get(login, req.params.id);
+    if (emUso) return res.status(409).json({ erro: 'esse login já está em uso' });
+  }
+
+  const roleFinal = ['admin', 'supervisor', 'vendedor'].includes(role) ? role : vendedor.role;
+
+  db.prepare(`UPDATE vendedores SET nome = ?, login = ?, role = ? WHERE id = ?`)
+    .run(nome || vendedor.nome, login || vendedor.login, roleFinal, req.params.id);
+
+  res.json({ ok: true });
+});
+
 // ---------------------------------------------------------------
 // WEBHOOKS — dois pontos de entrada:
 //   /webhook/message  → simulado (usado pelo scripts/simulate-*.js e testes)
@@ -147,16 +167,26 @@ if (!BOAS_VINDAS_ATIVA) {
 }
 
 async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo }) {
-  const leadAtivo = db.prepare(`
-    SELECT * FROM leads
-    WHERE telefone = ? AND status IN ('novo', 'em_atendimento')
-    ORDER BY criado_em DESC LIMIT 1
+  const leadExistente = db.prepare(`
+    SELECT * FROM leads WHERE telefone = ? ORDER BY criado_em DESC LIMIT 1
   `).get(telefone);
 
-  if (leadAtivo) {
+  if (leadExistente && leadExistente.status !== 'encerrado') {
+    // Conversa já em aberto (novo ou em_atendimento) — só adiciona a mensagem
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
-      .run(leadAtivo.id, texto, midia_url || null, midia_tipo || null);
-    return { lead_id: leadAtivo.id, info: 'mensagem adicionada a conversa existente (lead não duplicado)' };
+      .run(leadExistente.id, texto, midia_url || null, midia_tipo || null);
+    return { lead_id: leadExistente.id, info: 'mensagem adicionada a conversa existente (lead não duplicado)' };
+  }
+
+  if (leadExistente && leadExistente.status === 'encerrado') {
+    // Cliente que já conversou antes volta a escrever — reabre a conversa
+    // antiga (com todo o histórico) em vez de criar um lead do zero.
+    // Se já tinha vendedor, volta pra ele; se nunca teve, volta pra fila.
+    const novoStatus = leadExistente.vendedor_id ? 'em_atendimento' : 'novo';
+    db.prepare(`UPDATE leads SET status = ? WHERE id = ?`).run(novoStatus, leadExistente.id);
+    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
+      .run(leadExistente.id, texto, midia_url || null, midia_tipo || null);
+    return { lead_id: leadExistente.id, info: 'conversa antiga reaberta' };
   }
 
   const oportunidades = ai.identificarOportunidade(texto);
@@ -256,11 +286,50 @@ app.post('/webhook/zapi', async (req, res) => {
 // Leads em atendimento/encerrados só aparecem por inteiro pro dono
 // (quem puxou) ou pro admin — pros demais, só um resumo mínimo
 // (nome + interesse), sem telefone e sem conversa.
+// Busca por nome/telefone — pra achar conversa antiga (mesmo encerrada) e
+// continuar de onde parou. Vendedor só acha as próprias; gestor acha todas.
+app.get('/api/leads/buscar', requireAuth, (req, res) => {
+  const termo = (req.query.q || '').trim();
+  if (termo.length < 2) return res.json([]);
+
+  const todos = db.prepare(`
+    SELECT * FROM leads
+    WHERE (nome_cliente LIKE ? OR telefone LIKE ?)
+    ORDER BY criado_em DESC LIMIT 30
+  `).all(`%${termo}%`, `%${termo}%`);
+
+  const visiveis = todos.filter((l) => ehGestor(req.usuario) || l.vendedor_id === req.usuario.id);
+
+  const resultado = visiveis.map((lead) => {
+    const ultima = db.prepare(
+      'SELECT remetente, texto, criado_em FROM mensagens WHERE lead_id = ? ORDER BY id DESC LIMIT 1'
+    ).get(lead.id);
+    return { id: lead.id, nome_cliente: lead.nome_cliente, telefone: lead.telefone, status: lead.status, ultima_mensagem: ultima || null };
+  });
+
+  res.json(resultado);
+});
+
 app.get('/api/leads', requireAuth, (req, res) => {
-  const { status } = req.query;
+  const { status, data } = req.query;
   let leads;
+
   if (status) {
-    leads = db.prepare('SELECT * FROM leads WHERE status = ? ORDER BY criado_em DESC').all(status);
+    const statusList = status.split(',').map((s) => s.trim());
+    const placeholders = statusList.map(() => '?').join(',');
+
+    if (statusList.length === 1 && statusList[0] === 'novo') {
+      // Fila de leads novos: vendedor sempre vê só hoje; admin pode escolher outra data
+      const dataFiltro = (req.usuario.role === 'admin' && data) ? data : new Date().toISOString().slice(0, 10);
+      leads = db.prepare(`
+        SELECT * FROM leads WHERE status IN (${placeholders}) AND date(criado_em) = date(?)
+        ORDER BY criado_em DESC
+      `).all(...statusList, dataFiltro);
+    } else {
+      // Conversas ativas (em_atendimento + encerrado): sem filtro de data,
+      // acumula tudo tipo WhatsApp — nunca some.
+      leads = db.prepare(`SELECT * FROM leads WHERE status IN (${placeholders}) ORDER BY criado_em DESC`).all(...statusList);
+    }
   } else {
     leads = db.prepare('SELECT * FROM leads ORDER BY criado_em DESC').all();
   }
@@ -342,11 +411,55 @@ app.post('/api/leads/:id/claim', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// Encerrar atendimento — só o dono do lead ou o admin.
-// Agora exige resultado (convertido/perdido) pra alimentar o relatório do dia.
-app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
-  const { resultado, valor_venda, motivo_perda } = req.body;
+// Transferir atendimento pra outro vendedor — dono do lead ou gestor.
+// Mantém todo o histórico, só troca quem é responsável.
+app.post('/api/leads/:id/transferir', requireAuth, (req, res) => {
+  const { novo_vendedor_id } = req.body;
+  if (!novo_vendedor_id) return res.status(400).json({ erro: 'informe pra quem transferir' });
 
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+
+  const dono = lead.vendedor_id === req.usuario.id;
+  if (!ehGestor(req.usuario) && !dono) {
+    return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode transferir' });
+  }
+
+  const novoVendedor = db.prepare('SELECT id FROM vendedores WHERE id = ?').get(novo_vendedor_id);
+  if (!novoVendedor) return res.status(404).json({ erro: 'vendedor de destino não encontrado' });
+
+  db.prepare(`UPDATE leads SET vendedor_id = ?, status = 'em_atendimento' WHERE id = ?`)
+    .run(novo_vendedor_id, req.params.id);
+
+  res.json({ ok: true });
+});
+
+// Vendedor registra um lead manualmente (cliente que veio por outro canal —
+// telefone, presencial). Fica marcado como "nota" — não dispara mensagem
+// nenhuma pro WhatsApp sozinho. Se o vendedor quiser mandar mensagem de
+// verdade depois, faz isso normalmente pela conversa (decisão dele, com
+// o mesmo cuidado de sempre sobre iniciar conversa com número novo).
+app.post('/api/leads/manual', requireAuth, (req, res) => {
+  const { telefone, nome_cliente, observacao } = req.body;
+  if (!telefone) return res.status(400).json({ erro: 'telefone é obrigatório' });
+
+  const existente = db.prepare(`SELECT id FROM leads WHERE telefone = ? AND status != 'encerrado'`).get(telefone);
+  if (existente) return res.status(409).json({ erro: 'já existe uma conversa em aberto com esse telefone' });
+
+  const info = db.prepare(`
+    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, vendedor_id)
+    VALUES (?, ?, ?, 'manual', 'em_atendimento', ?)
+  `).run(telefone, nome_cliente || null, observacao || 'Lead cadastrado manualmente', req.usuario.id);
+
+  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'nota', ?)`)
+    .run(info.lastInsertRowid, observacao || `Lead cadastrado manualmente por ${req.usuario.nome}`);
+
+  res.status(201).json({ ok: true, lead_id: info.lastInsertRowid });
+});
+
+// Encerrar atendimento — só o dono do lead ou o admin. Encerra em 1 clique,
+// a análise diária da IA decide resultado/valor/motivo depois, sozinha.
+app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
@@ -355,29 +468,10 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode encerrar' });
   }
 
-  if (resultado !== 'convertido' && resultado !== 'perdido') {
-    return res.status(400).json({ erro: 'informe o resultado: convertido ou perdido' });
-  }
-  if (resultado === 'convertido' && (valor_venda === undefined || valor_venda === null || valor_venda === '')) {
-    return res.status(400).json({ erro: 'informe o valor da venda' });
-  }
-  if (resultado === 'perdido' && !motivo_perda) {
-    return res.status(400).json({ erro: 'informe o motivo da perda' });
-  }
-
-  db.prepare(`
-    UPDATE leads SET status = 'encerrado', resultado = ?, valor_venda = ?, motivo_perda = ?
-    WHERE id = ?
-  `).run(resultado, resultado === 'convertido' ? Number(valor_venda) : null, resultado === 'perdido' ? motivo_perda : null, req.params.id);
-
-  // Se converteu, já cria automaticamente o lembrete de pós-venda daqui a 3 dias
-  if (resultado === 'convertido') {
-    const daqui3dias = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
-    db.prepare(`
-      INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
-      VALUES (?, ?, ?, ?, 'pos_venda')
-    `).run(req.params.id, req.usuario.id, `Pós-venda — confirmar se ${lead.nome_cliente || lead.telefone} recebeu tudo certo`, daqui3dias);
-  }
+  // Encerra em 1 clique — sem perguntar resultado/valor/motivo aqui.
+  // A análise diária da IA lê a conversa depois e preenche isso sozinha
+  // (resultado fica null até lá, contando como "aguardando análise").
+  db.prepare(`UPDATE leads SET status = 'encerrado' WHERE id = ?`).run(req.params.id);
 
   res.json({ ok: true });
 });
@@ -400,6 +494,13 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   const rotulos = { imagem: '[Imagem]', audio: '[Áudio]', video: '[Vídeo]', documento: '[Documento]' };
   const textoFinal = texto || `${rotulos[midia_tipo] || '[Anexo]'}${midia_nome ? ' ' + midia_nome : ''}`;
 
+  // Se achou essa conversa pela busca (encerrada) e decidiu escrever de
+  // novo, reabre automaticamente — sem precisar de nenhum passo extra.
+  if (lead.status === 'encerrado') {
+    db.prepare(`UPDATE leads SET status = 'em_atendimento', vendedor_id = ? WHERE id = ?`)
+      .run(lead.vendedor_id || req.usuario.id, req.params.id);
+  }
+
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
     .run(req.params.id, textoFinal, midia_base64 || null, midia_tipo || null);
 
@@ -414,7 +515,7 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
 // VENDEDORES
 // ---------------------------------------------------------------
 app.get('/api/vendedores', requireAuth, (req, res) => {
-  const vendedores = db.prepare('SELECT id, nome, role FROM vendedores ORDER BY nome ASC').all();
+  const vendedores = db.prepare('SELECT id, nome, login, role FROM vendedores ORDER BY nome ASC').all();
   const comContagem = vendedores.map((v) => {
     const leadsAtivos = db.prepare(
       `SELECT COUNT(*) AS n FROM leads WHERE vendedor_id = ? AND status = 'em_atendimento'`
@@ -588,12 +689,16 @@ function calcularRelatorio(dataISO, filtroVendedorId) {
     });
 
     const media = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+    const indefinidos = leads.filter(l => l.resultado === 'indefinido').length;
+    const encerradosPendentes = leads.filter(l => l.status === 'encerrado' && !l.resultado).length;
 
     return {
       leads_recebidos: recebidos,
       convertidos: convertidos.length,
       perdidos: perdidos.length,
-      ainda_em_aberto: recebidos - convertidos.length - perdidos.length,
+      indefinidos,
+      encerrados_aguardando_analise: encerradosPendentes,
+      ainda_em_aberto: recebidos - convertidos.length - perdidos.length - indefinidos - encerradosPendentes,
       taxa_conversao: recebidos > 0 ? Math.round((convertidos.length / recebidos) * 1000) / 10 : 0,
       ticket_medio: Math.round(ticketMedio * 100) / 100,
       valor_total_vendido: Math.round(valorTotal * 100) / 100,
