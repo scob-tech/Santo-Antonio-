@@ -34,6 +34,18 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// "Supervisor" tem a mesma visibilidade e ações do admin, EXCETO trocar
+// senha e ver relatório (essas duas continuam exclusivas de requireAdmin).
+function ehGestor(usuario) {
+  return usuario && (usuario.role === 'admin' || usuario.role === 'supervisor');
+}
+function requireGestor(req, res, next) {
+  if (!ehGestor(req.usuario)) {
+    return res.status(403).json({ erro: 'ação restrita a administrador ou supervisor' });
+  }
+  next();
+}
+
 // ---------------------------------------------------------------
 // LOGIN / LOGOUT / SESSÃO ATUAL
 // ---------------------------------------------------------------
@@ -67,7 +79,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 // ---------------------------------------------------------------
 // CADASTRO DE VENDEDOR (só admin)
 // ---------------------------------------------------------------
-app.post('/api/vendedores', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/vendedores', requireAuth, requireGestor, (req, res) => {
   const { nome, login, senha, role } = req.body;
   if (!nome || !login || !senha) {
     return res.status(400).json({ erro: 'nome, login e senha são obrigatórios' });
@@ -81,7 +93,11 @@ app.post('/api/vendedores', requireAuth, requireAdmin, (req, res) => {
     return res.status(409).json({ erro: 'esse login já está em uso' });
   }
 
-  const roleFinal = role === 'admin' ? 'admin' : 'vendedor';
+  // Só um admin de verdade pode criar outro admin ou supervisor — um
+  // supervisor cadastrando alguém só consegue criar vendedor comum,
+  // pra não dar pra ele mesmo escalar privilégio.
+  const rolesPermitidas = req.usuario.role === 'admin' ? ['admin', 'supervisor', 'vendedor'] : ['vendedor'];
+  const roleFinal = rolesPermitidas.includes(role) ? role : 'vendedor';
   const senha_hash = authLib.hashSenha(senha);
   const info = db.prepare(`
     INSERT INTO vendedores (nome, login, senha_hash, role, disponivel)
@@ -121,6 +137,15 @@ app.post('/api/vendedores/:id/redefinir-senha', requireAuth, requireAdmin, (req,
 // o resultado. Envia a boas-vindas automática de volta pro WhatsApp de
 // verdade quando a Z-API estiver configurada (enviarMensagemWhatsapp vira
 // no-op silencioso se não estiver — ver zapi.js).
+// Interruptor da mensagem automática de boas-vindas. Desliga só isso —
+// o resto do sistema (fila, conversa, envio manual do vendedor) continua
+// 100% normal. Pra desligar: variável BOAS_VINDAS_AUTOMATICA=false no Railway.
+// Sem a variável (ou qualquer outro valor), fica ligado por padrão.
+const BOAS_VINDAS_ATIVA = process.env.BOAS_VINDAS_AUTOMATICA !== 'false';
+if (!BOAS_VINDAS_ATIVA) {
+  console.log('>> Mensagem automática de boas-vindas DESLIGADA (BOAS_VINDAS_AUTOMATICA=false) — só envio manual do vendedor está ativo.');
+}
+
 async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo }) {
   const leadAtivo = db.prepare(`
     SELECT * FROM leads
@@ -135,12 +160,16 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   }
 
   const oportunidades = ai.identificarOportunidade(texto);
+  let interesse = oportunidades.length > 0 ? oportunidades.join(', ') : null;
+  let boasVindas = null;
 
-  // Tenta gerar boas-vindas + resumo com IA de verdade; se não estiver
-  // configurada (ou falhar), cai pro stub de palavra-chave (ai.js).
-  const iaResposta = await claudeIA.processarNovaMensagem(texto, nome_cliente);
-  const interesse = (iaResposta && iaResposta.interesse) || (oportunidades.length > 0 ? oportunidades.join(', ') : null);
-  const boasVindas = (iaResposta && iaResposta.boas_vindas) || ai.gerarMensagemBoasVindas(texto, nome_cliente);
+  if (BOAS_VINDAS_ATIVA) {
+    // Tenta gerar boas-vindas + resumo com IA de verdade; se não estiver
+    // configurada (ou falhar), cai pro stub de palavra-chave (ai.js).
+    const iaResposta = await claudeIA.processarNovaMensagem(texto, nome_cliente);
+    if (iaResposta && iaResposta.interesse) interesse = iaResposta.interesse;
+    boasVindas = (iaResposta && iaResposta.boas_vindas) || ai.gerarMensagemBoasVindas(texto, nome_cliente);
+  }
 
   const insertLead = db.prepare(`
     INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse)
@@ -152,11 +181,12 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
     .run(leadId, texto, midia_url || null, midia_tipo || null);
 
-  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'ia', ?)`)
-    .run(leadId, boasVindas);
-
-  // Manda a boas-vindas de verdade pro WhatsApp do cliente (se configurado)
-  await zapi.enviarMensagemWhatsapp(telefone, boasVindas);
+  if (boasVindas) {
+    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'ia', ?)`)
+      .run(leadId, boasVindas);
+    // Manda a boas-vindas de verdade pro WhatsApp do cliente (se configurado)
+    await zapi.enviarMensagemWhatsapp(telefone, boasVindas);
+  }
 
   return { lead_id: leadId, mensagem_boas_vindas: boasVindas, oportunidades_detectadas: oportunidades };
 }
@@ -175,10 +205,29 @@ app.post('/webhook/message', async (req, res) => {
 app.post('/webhook/zapi', async (req, res) => {
   const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe } = zapi.interpretarWebhook(req.body);
 
-  // Sempre responde 200 rápido pra Z-API não ficar reenviando —
-  // qualquer motivo de "ignorar" ainda assim é uma resposta de sucesso.
+  // fromMe: true pode ser (a) eco da mensagem que NÓS mandamos pela API,
+  // ou (b) o vendedor respondendo manualmente direto no WhatsApp do celular
+  // conectado. No caso (b), registramos a mensagem na conversa também —
+  // senão ela fica invisível no sistema mesmo tendo sido enviada de verdade.
   if (fromMe) {
-    return res.status(200).json({ info: 'mensagem enviada por nós mesmos, ignorada' });
+    if (zapi.foiEnviadaPorNos(messageId)) {
+      return res.status(200).json({ info: 'eco da nossa própria mensagem, ignorado' });
+    }
+    if (zapi.jaProcessada(`manual-${messageId}`)) {
+      return res.status(200).json({ info: 'mensagem manual já processada antes, ignorada' });
+    }
+    if (telefone && texto) {
+      zapi.marcarProcessada(`manual-${messageId}`);
+      const leadAtivo = db.prepare(`
+        SELECT * FROM leads WHERE telefone = ? AND status = 'em_atendimento' ORDER BY criado_em DESC LIMIT 1
+      `).get(telefone);
+      if (leadAtivo) {
+        db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
+          .run(leadAtivo.id, texto, midiaUrl || null, midiaTipo || null);
+        return res.status(200).json({ info: 'mensagem manual do vendedor registrada na conversa' });
+      }
+    }
+    return res.status(200).json({ info: 'mensagem enviada por nós (sem lead ativo correspondente), ignorada' });
   }
   if (zapi.jaProcessada(messageId)) {
     return res.status(200).json({ info: 'mensagem já processada antes (duplicada), ignorada' });
@@ -218,7 +267,7 @@ app.get('/api/leads', requireAuth, (req, res) => {
 
   const resultado = leads.map((lead) => {
     const dono = lead.vendedor_id === req.usuario.id;
-    const podeVerTudo = req.usuario.role === 'admin' || dono || lead.status === 'novo';
+    const podeVerTudo = ehGestor(req.usuario) || dono || lead.status === 'novo';
 
     if (podeVerTudo) {
       const ultima = db.prepare(
@@ -251,7 +300,7 @@ app.get('/api/leads/:id', requireAuth, (req, res) => {
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
   const dono = lead.vendedor_id === req.usuario.id;
-  const podeVer = req.usuario.role === 'admin' || dono || lead.status === 'novo';
+  const podeVer = ehGestor(req.usuario) || dono || lead.status === 'novo';
   if (!podeVer) {
     return res.status(403).json({ erro: 'este lead já está sendo atendido por outro vendedor' });
   }
@@ -292,7 +341,7 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
   const dono = lead.vendedor_id === req.usuario.id;
-  if (req.usuario.role !== 'admin' && !dono) {
+  if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode encerrar' });
   }
 
@@ -332,7 +381,7 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
   const dono = lead.vendedor_id === req.usuario.id;
-  if (req.usuario.role !== 'admin' && !dono) {
+  if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode responder' });
   }
 
@@ -363,7 +412,7 @@ app.get('/api/vendedores', requireAuth, (req, res) => {
 // ---------------------------------------------------------------
 app.get('/api/lembretes', requireAuth, (req, res) => {
   let lembretes;
-  if (req.usuario.role === 'admin') {
+  if (ehGestor(req.usuario)) {
     lembretes = db.prepare(`
       SELECT lembretes.*, leads.nome_cliente, leads.telefone
       FROM lembretes
@@ -403,12 +452,12 @@ app.post('/api/lembretes', requireAuth, (req, res) => {
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
   const dono = lead.vendedor_id === req.usuario.id;
-  if (req.usuario.role !== 'admin' && !dono) {
+  if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode criar tarefa nesse lead' });
   }
 
   // Só admin pode atribuir a tarefa a outro vendedor; qualquer outro caso, é pra si mesmo
-  const vendedorDestino = req.usuario.role === 'admin' && vendedor_id ? vendedor_id : req.usuario.id;
+  const vendedorDestino = ehGestor(req.usuario) && vendedor_id ? vendedor_id : req.usuario.id;
 
   const info = db.prepare(`
     INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
@@ -420,7 +469,7 @@ app.post('/api/lembretes', requireAuth, (req, res) => {
 
 // Disparo manual da análise diária (útil pra testar sem esperar 18h, ou se
 // o servidor esteve fora do ar na hora automática) — só admin.
-app.post('/api/admin/rodar-analise-diaria', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/admin/rodar-analise-diaria', requireAuth, requireGestor, async (req, res) => {
   const resultado = await agendador.rodarAnaliseDiaria();
   res.json(resultado);
 });
@@ -434,7 +483,7 @@ app.get('/api/leads/:id/sugestao-encerramento', requireAuth, async (req, res) =>
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
   const dono = lead.vendedor_id === req.usuario.id;
-  if (req.usuario.role !== 'admin' && !dono) {
+  if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'sem permissão pra esse lead' });
   }
   if (!claudeIA.configurado) {
@@ -452,7 +501,7 @@ app.get('/api/leads/:id/sugestao-tarefa', requireAuth, async (req, res) => {
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
   const dono = lead.vendedor_id === req.usuario.id;
-  if (req.usuario.role !== 'admin' && !dono) {
+  if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'sem permissão pra esse lead' });
   }
   if (!claudeIA.configurado) {
@@ -553,7 +602,52 @@ function calcularRelatorio(dataISO, filtroVendedorId) {
   return { data: dataISO, escopo: 'geral', ...geral, por_vendedor: porVendedor };
 }
 
+// Excluir um lead (e tudo ligado a ele) — só admin. Útil pra limpar dado de
+// teste/demonstração, ou remover um lead criado por engano.
+app.delete('/api/leads/:id', requireAuth, requireGestor, (req, res) => {
+  const lead = db.prepare('SELECT id FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+
+  db.prepare('DELETE FROM mensagens WHERE lead_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM lembretes WHERE lead_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM leads WHERE id = ?').run(req.params.id);
+
+  res.json({ ok: true });
+});
+
+// Limpa de uma vez todos os dados criados pela simulação de demonstração
+// (scripts/simulate-demo.js) — leads dos vendedores "*_demo" e os próprios
+// vendedores demo. Não mexe em nenhum dado real. Só admin.
+app.post('/api/admin/limpar-demo', requireAuth, requireGestor, (req, res) => {
+  const vendedoresDemo = db.prepare(`SELECT id FROM vendedores WHERE login LIKE '%\\_demo' ESCAPE '\\'`).all();
+  const idsVendedoresDemo = vendedoresDemo.map((v) => v.id);
+
+  const leadsParaApagar = db.prepare(`
+    SELECT id FROM leads WHERE telefone LIKE '1199111%' ${idsVendedoresDemo.length > 0 ? `OR vendedor_id IN (${idsVendedoresDemo.join(',')})` : ''}
+  `).all();
+
+  let leadsApagados = 0;
+  for (const lead of leadsParaApagar) {
+    db.prepare('DELETE FROM mensagens WHERE lead_id = ?').run(lead.id);
+    db.prepare('DELETE FROM lembretes WHERE lead_id = ?').run(lead.id);
+    db.prepare('DELETE FROM leads WHERE id = ?').run(lead.id);
+    leadsApagados++;
+  }
+
+  let vendedoresApagados = 0;
+  for (const id of idsVendedoresDemo) {
+    db.prepare('DELETE FROM lembretes WHERE vendedor_id = ?').run(id);
+    db.prepare('DELETE FROM vendedores WHERE id = ?').run(id);
+    vendedoresApagados++;
+  }
+
+  res.json({ ok: true, leads_apagados: leadsApagados, vendedores_demo_apagados: vendedoresApagados });
+});
+
 app.get('/api/relatorio', requireAuth, (req, res) => {
+  if (req.usuario.role === 'supervisor') {
+    return res.status(403).json({ erro: 'relatório não disponível pra esse nível de acesso' });
+  }
   const dataISO = req.query.data || new Date().toISOString().slice(0, 10);
   if (req.usuario.role === 'admin') {
     res.json(calcularRelatorio(dataISO, null));
