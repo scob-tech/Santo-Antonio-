@@ -1,4 +1,7 @@
 const API = '';
+// Login da conta "de desenvolvedor" — só ela vê o botão "Limpar demo".
+// Contas admin criadas depois (ex: pro cliente final) não têm esse botão.
+const LOGIN_DESENVOLVEDOR = 'admin';
 let usuarioAtual = null;
 let leadsCache = [];
 let conversasAtivasCache = [];
@@ -48,6 +51,11 @@ function renderizarUserBox() {
       document.getElementById('cadastro-form').classList.toggle('aberto');
     };
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
+  }
+  // "Limpar demo" fica exclusivo da conta de desenvolvedor (login "admin"),
+  // não de qualquer administrador — quando o cliente ganhar a própria conta
+  // admin (ex: pra Juliana), esse botão não aparece pra ela.
+  if (usuarioAtual.login === LOGIN_DESENVOLVEDOR) {
     document.getElementById('btn-limpar-demo').style.display = 'inline-block';
   }
   if (usuarioAtual.role !== 'supervisor') {
@@ -72,7 +80,10 @@ async function limparDadosDemo() {
 
 async function excluirLeadAtual() {
   if (!leadConversaAtual) return;
-  if (!confirm(`Excluir permanentemente o lead de ${leadConversaAtual.nome_cliente || leadConversaAtual.telefone}? Isso apaga toda a conversa e não pode ser desfeito.`)) return;
+  const nome = leadConversaAtual.nome_cliente || leadConversaAtual.telefone;
+
+  if (!confirm(`Excluir permanentemente o lead de ${nome}? Isso apaga toda a conversa e não pode ser desfeito.`)) return;
+  if (!confirm(`Confirma DE NOVO: excluir ${nome} pra sempre? Não tem como recuperar depois.`)) return;
 
   const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}`, { method: 'DELETE' });
   if (!res.ok) {
@@ -347,8 +358,56 @@ function renderizarConversa(lead) {
   const sugestaoBox = document.getElementById('conversa-sugestao-tarefa');
   sugestaoBox.style.display = 'none';
   sugestaoBox.innerHTML = '';
-  document.getElementById('btn-excluir-lead').style.display = ehGestor(usuarioAtual) ? 'inline-block' : 'none';
+  document.getElementById('btn-excluir-lead').style.display = usuarioAtual.role === 'admin' ? 'inline-block' : 'none';
   removerAnexo();
+}
+
+let gravador = null;
+let pedacosAudio = [];
+let gravando = false;
+
+async function alternarGravacaoAudio() {
+  const btn = document.getElementById('btn-audio');
+
+  if (gravando) {
+    gravador.stop();
+    return;
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert('Seu navegador não suporta gravação de áudio.');
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    pedacosAudio = [];
+    gravador = new MediaRecorder(stream);
+
+    gravador.ondataavailable = (e) => pedacosAudio.push(e.data);
+    gravador.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(pedacosAudio, { type: 'audio/webm' });
+      const leitor = new FileReader();
+      leitor.onload = () => {
+        anexoSelecionado = { dataUri: leitor.result, tipo: 'audio', nome: 'audio.webm' };
+        const preview = document.getElementById('conversa-anexo-preview');
+        preview.style.display = 'flex';
+        preview.innerHTML = `🎤 Áudio gravado <button class="link-mini" onclick="removerAnexo()" style="margin-left:auto;">Remover</button>`;
+      };
+      leitor.readAsDataURL(blob);
+      gravando = false;
+      btn.textContent = '🎤';
+      btn.style.background = '';
+    };
+
+    gravador.start();
+    gravando = true;
+    btn.textContent = '⏹';
+    btn.style.background = 'var(--red)';
+  } catch (err) {
+    alert('Não consegui acessar o microfone. Confere se você deu permissão pro navegador.');
+  }
 }
 
 let anexoSelecionado = null; // { dataUri, tipo, nome }
