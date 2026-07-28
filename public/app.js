@@ -74,7 +74,6 @@ function renderizarUserBox() {
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
   if (usuarioAtual.role === 'admin') {
     document.getElementById('painel-vendedores').style.display = 'block';
-    document.getElementById('filtro-data-fila').style.display = 'inline-block';
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
@@ -238,7 +237,7 @@ async function carregarVendedores() {
 async function carregarLeads() {
   let url = `${API}/api/leads?status=novo`;
   const filtroData = document.getElementById('filtro-data-fila');
-  if (usuarioAtual.role === 'admin' && filtroData && filtroData.value) {
+  if (filtroData && filtroData.value) {
     url += `&data=${filtroData.value}`;
   }
   const res = await fetch(url);
@@ -287,13 +286,24 @@ async function carregarLeads() {
       acao = `<button onclick="encerrarLead(${l.id})">Encerrar atendimento</button>`;
     }
 
-    // Tempo de espera na FILA — destaca se passou de 5 min sem ser puxado (gargalo de fila)
+    // Tempo de espera na FILA — destaca se passou de 5 min sem ser puxado (gargalo de fila).
+    // Formatado em min/h/dias porque agora a fila mostra lead de qualquer
+    // dia, não só hoje — "esperando há 2880 min" seria ilegível.
     const minutosEsperando = Math.floor((Date.now() - new Date(l.criado_em + 'Z')) / 60000);
     let tempoHtml = '';
     if (l.status === 'novo') {
       const alerta = minutosEsperando >= 5;
+      let tempoTexto;
+      if (minutosEsperando < 60) {
+        tempoTexto = `${minutosEsperando} min`;
+      } else if (minutosEsperando < 60 * 24) {
+        tempoTexto = `${Math.floor(minutosEsperando / 60)} h`;
+      } else {
+        const dias = Math.floor(minutosEsperando / (60 * 24));
+        tempoTexto = `${dias} dia${dias === 1 ? '' : 's'}`;
+      }
       tempoHtml = `<div class="${alerta ? 'alerta' : ''}" style="${alerta ? '' : 'font-size:12px; color:var(--muted); margin-top:6px;'}">
-        ${alerta ? '⚠️ ' : ''}Esperando há ${minutosEsperando} min${alerta ? ' — gargalo de fila' : ''}
+        ${alerta ? '⚠️ ' : ''}Esperando há ${tempoTexto}${alerta ? ' — gargalo de fila' : ''}
       </div>`;
     }
 
