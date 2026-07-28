@@ -183,7 +183,18 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     // antiga (com todo o histórico) em vez de criar um lead do zero.
     // Se já tinha vendedor, volta pra ele; se nunca teve, volta pra fila.
     const novoStatus = leadExistente.vendedor_id ? 'em_atendimento' : 'novo';
-    db.prepare(`UPDATE leads SET status = ? WHERE id = ?`).run(novoStatus, leadExistente.id);
+    // Quando volta pra fila ('novo'), atualiza criado_em pra AGORA. Sem isso,
+    // a fila (que filtra por "date(criado_em) = hoje") nunca mostra esse lead
+    // de novo depois de reaberto em outro dia — ele fica escondido no sistema
+    // até alguém pensar em ir catar numa data antiga pelo filtro do admin.
+    // Leads que voltam direto pra 'em_atendimento' não usam esse filtro de
+    // data, então não precisam disso.
+    if (novoStatus === 'novo') {
+      db.prepare(`UPDATE leads SET status = ?, criado_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?`)
+        .run(novoStatus, leadExistente.id);
+    } else {
+      db.prepare(`UPDATE leads SET status = ? WHERE id = ?`).run(novoStatus, leadExistente.id);
+    }
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
       .run(leadExistente.id, texto, midia_url || null, midia_tipo || null);
     return { lead_id: leadExistente.id, info: 'conversa antiga reaberta' };
