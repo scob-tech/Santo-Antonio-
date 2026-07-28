@@ -737,7 +737,14 @@ async function carregarConversasAtivas(termoBusca) {
     return;
   }
 
+  // Prioridade visual: 1) não lida primeiro (o que precisa de atenção agora),
+  // 2) em atendimento sem pendência, por atividade mais recente,
+  // 3) encerrada sempre no fim da lista, não importa quando foi a última msg.
   const ordenadas = [...leads].sort((a, b) => {
+    const grupo = (l) => (l.nao_lidas || 0) > 0 ? 0 : (l.status === 'encerrado' ? 2 : 1);
+    const grupoA = grupo(a);
+    const grupoB = grupo(b);
+    if (grupoA !== grupoB) return grupoA - grupoB;
     const ta = a.ultima_mensagem ? new Date(a.ultima_mensagem.criado_em) : new Date(a.criado_em);
     const tb = b.ultima_mensagem ? new Date(b.ultima_mensagem.criado_em) : new Date(b.criado_em);
     return tb - ta;
