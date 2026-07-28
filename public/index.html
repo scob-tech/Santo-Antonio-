@@ -32,6 +32,16 @@
 
   * { box-sizing: border-box; }
 
+  html {
+    /* No modo "instalado" (Adicionar à Tela de Início), o WebKit do iOS
+       às vezes aumenta automaticamente o tamanho de texto pra "ajudar" a
+       leitura em tela cheia — isso infla fonte e, por tabela, botões e
+       ícones que dependem dela. Isso trava esse ajuste automático, pra
+       ficar do mesmo tamanho tanto instalado quanto no Safari normal. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     font-family: 'Inter', system-ui, sans-serif;
     background: var(--bg);
