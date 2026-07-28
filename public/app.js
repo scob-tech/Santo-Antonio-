@@ -67,9 +67,11 @@ function renderizarUserBox() {
   el.innerHTML = `
     <span class="user-nome">${usuarioAtual.nome}</span>
     <span class="user-role">${rotulos[usuarioAtual.role] || 'Vendedor'}</span>
+    <button class="btn-secundario" id="btn-notificacoes" onclick="alternarNotificacoes()">🔔 Notificações</button>
     ${usuarioAtual.role === 'admin' ? `<button class="btn-secundario" onclick="abrirModalSenha(${usuarioAtual.id}, 'você')">🔑 Minha senha</button>` : ''}
     <button class="btn-secundario" onclick="sair()">Sair</button>
   `;
+  atualizarBotaoNotificacoes();
 
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
   if (usuarioAtual.role === 'admin') {
@@ -1019,9 +1021,141 @@ async function atualizarTudo() {
   await atualizarConversaAberta();
 }
 
+// ---------------- Notificação push ----------------
+// Converte a chave pública VAPID (texto base64url) pro formato de bytes
+// que o navegador espera em pushManager.subscribe. É sempre essa mesma
+// conversão padrão, documentada em todo tutorial de Web Push.
+function base64UrlParaUint8Array(base64Url) {
+  const padding = '='.repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const bruto = atob(base64);
+  const bytes = new Uint8Array(bruto.length);
+  for (let i = 0; i < bruto.length; i++) bytes[i] = bruto.charCodeAt(i);
+  return bytes;
+}
+
+async function registrarServiceWorker() {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    return await navigator.serviceWorker.register('/sw.js');
+  } catch (err) {
+    console.warn('Não deu pra registrar o service worker:', err);
+    return null;
+  }
+}
+
+async function inscricaoAtual() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  const registro = await navigator.serviceWorker.ready;
+  return registro.pushManager.getSubscription();
+}
+
+async function atualizarBotaoNotificacoes() {
+  const btn = document.getElementById('btn-notificacoes');
+  if (!btn) return;
+
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    btn.textContent = '🔕 Notificação indisponível';
+    btn.disabled = true;
+    btn.title = 'Esse navegador não suporta notificação. No iPhone, use "Adicionar à Tela de Início" pelo Safari primeiro.';
+    return;
+  }
+
+  if (Notification.permission === 'denied') {
+    btn.textContent = '🚫 Notificação bloqueada';
+    btn.title = 'Você bloqueou a notificação pra esse site — pra reativar, muda isso nas configurações do navegador.';
+    return;
+  }
+
+  const inscricao = await inscricaoAtual();
+  if (inscricao) {
+    btn.textContent = '🔔 Notificações ativadas';
+    btn.title = 'Clique pra desativar';
+  } else {
+    btn.textContent = '🔕 Ativar notificações';
+    btn.title = 'Receba aviso de lead novo ou mensagem mesmo com o app fechado';
+  }
+}
+
+async function alternarNotificacoes() {
+  const btn = document.getElementById('btn-notificacoes');
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    alert('Esse navegador não suporta notificação. No iPhone: abra pelo Safari, toque em Compartilhar → "Adicionar à Tela de Início", e acesse o sistema por esse ícone instalado.');
+    return;
+  }
+
+  const inscricaoExistente = await inscricaoAtual();
+
+  if (inscricaoExistente) {
+    // Desativar
+    try {
+      await fetch(`${API}/api/push/unsubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: inscricaoExistente.endpoint }),
+      });
+      await inscricaoExistente.unsubscribe();
+    } catch (err) {
+      console.warn('Erro ao desativar notificação:', err);
+    }
+    await atualizarBotaoNotificacoes();
+    return;
+  }
+
+  // Ativar
+  if (btn) btn.textContent = '⏳ Ativando...';
+  const permissao = await Notification.requestPermission();
+  if (permissao !== 'granted') {
+    alert('Sem permissão de notificação, não dá pra te avisar de lead novo com o app fechado. Você pode mudar isso depois nas configurações do navegador.');
+    await atualizarBotaoNotificacoes();
+    return;
+  }
+
+  try {
+    const registro = await navigator.serviceWorker.ready;
+    const { publicKey } = await (await fetch(`${API}/api/push/public-key`)).json();
+    const novaInscricao = await registro.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlParaUint8Array(publicKey),
+    });
+    await fetch(`${API}/api/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(novaInscricao.toJSON()),
+    });
+  } catch (err) {
+    console.error('Erro ao ativar notificação:', err);
+    alert('Não consegui ativar a notificação. Tenta de novo, ou confere se o site está sendo acessado por https.');
+  }
+  await atualizarBotaoNotificacoes();
+}
+
+// Quando o vendedor clica na notificação, o sw.js manda essa mensagem pra
+// aba já aberta (se tiver) pedindo pra abrir a conversa certa direto.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data && event.data.tipo === 'abrir_lead' && event.data.leadId) {
+      abrirConversa(event.data.leadId);
+    }
+  });
+}
+
+// Se o sistema foi aberto numa aba NOVA a partir da notificação (não tinha
+// nenhuma aba aberta antes), o link vem com ?abrir_lead=ID — abre direto.
+function abrirLeadDaUrlSeTiver() {
+  const params = new URLSearchParams(window.location.search);
+  const leadId = params.get('abrir_lead');
+  if (leadId) {
+    abrirConversa(Number(leadId));
+    history.replaceState({}, '', window.location.pathname);
+  }
+}
+
 (async function iniciar() {
   const logado = await checarSessao();
   if (!logado) return;
+  registrarServiceWorker();
   atualizarTudo();
+  abrirLeadDaUrlSeTiver();
   setInterval(atualizarTudo, 3000); // atualiza sozinho a cada 3s (depois trocamos por realtime)
 })();

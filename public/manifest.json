@@ -1,0 +1,25 @@
+{
+  "name": "Depósito Santo Antônio - Central de Atendimento",
+  "short_name": "Sto Antônio",
+  "description": "Fila de leads e conversas do WhatsApp do Depósito Santo Antônio",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F1F2F5",
+  "theme_color": "#2B3990",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/img/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/img/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
