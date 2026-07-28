@@ -394,8 +394,12 @@ function renderizarConversa(lead) {
 
   const claimBox = document.getElementById('conversa-acao-claim');
   const respostaBox = document.getElementById('conversa-caixa-resposta');
+  const reabrirBox = document.getElementById('conversa-acao-reabrir');
 
-  if (lead.dono || ehGestor(usuarioAtual)) {
+  const podeAgir = lead.dono || ehGestor(usuarioAtual);
+  reabrirBox.style.display = (lead.status === 'encerrado' && podeAgir) ? 'block' : 'none';
+
+  if (podeAgir) {
     respostaBox.style.display = lead.status === 'encerrado' ? 'none' : 'flex';
     claimBox.style.display = 'none';
   } else if (lead.status === 'novo') {
@@ -470,7 +474,32 @@ function tipoDoArquivo(mime) {
   return 'documento';
 }
 
-function selecionarAnexo(event) {
+// Fotos de celular guardam a orientação certa só como metadado EXIF —
+// o pixel bruto fica "deitado" e um marcador diz "gire 90° pra exibir".
+// O navegador do vendedor respeita esse marcador (por isso a prévia aparece
+// certa), mas a Z-API/WhatsApp não respeita ao reprocessar a imagem pra
+// entregar pro cliente, e ela chega de lado. Corrigimos "queimando" a
+// rotação certa direto nos pixels antes de enviar, via canvas — assim a
+// imagem final já nasce correta e não depende de mais ninguém respeitar
+// EXIF. Se o navegador não suportar (bem raro hoje em dia), cai de volta
+// pro comportamento antigo (manda o arquivo original sem mexer).
+async function corrigirOrientacaoImagem(arquivo) {
+  try {
+    const bitmap = await createImageBitmap(arquivo, { imageOrientation: 'from-image' });
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.92);
+  } catch (err) {
+    console.warn('Não deu pra corrigir orientação da imagem, enviando original:', err);
+    return null;
+  }
+}
+
+async function selecionarAnexo(event) {
   const arquivo = event.target.files[0];
   if (!arquivo) return;
 
@@ -480,10 +509,29 @@ function selecionarAnexo(event) {
     return;
   }
 
+  const preview = document.getElementById('conversa-anexo-preview');
+
+  // Só JPEG tem esse problema de rotação por EXIF (é o formato que toda
+  // câmera de celular usa). PNG (prints de tela, catálogo, etc) não passa
+  // por essa correção — reencodar mudaria o formato à toa e poderia perder
+  // transparência sem necessidade nenhuma, já que PNG não sofre desse bug.
+  const ehJpeg = arquivo.type === 'image/jpeg' || arquivo.type === 'image/jpg';
+
+  if (ehJpeg) {
+    preview.style.display = 'flex';
+    preview.innerHTML = `📎 ${arquivo.name} (ajustando orientação...)`;
+    const dataUriCorrigido = await corrigirOrientacaoImagem(arquivo);
+    if (dataUriCorrigido) {
+      anexoSelecionado = { dataUri: dataUriCorrigido, tipo: 'imagem', nome: arquivo.name };
+      preview.innerHTML = `📎 ${arquivo.name} <button class="link-mini" onclick="removerAnexo()" style="margin-left:auto;">Remover</button>`;
+      return;
+    }
+    // createImageBitmap falhou — cai pro caminho antigo abaixo
+  }
+
   const leitor = new FileReader();
   leitor.onload = () => {
     anexoSelecionado = { dataUri: leitor.result, tipo: tipoDoArquivo(arquivo.type), nome: arquivo.name };
-    const preview = document.getElementById('conversa-anexo-preview');
     preview.style.display = 'flex';
     preview.innerHTML = `📎 ${arquivo.name} <button class="link-mini" onclick="removerAnexo()" style="margin-left:auto;">Remover</button>`;
   };
@@ -534,6 +582,20 @@ async function puxarLeadDaConversa() {
   if (!res.ok) {
     const err = await res.json();
     alert(err.erro || 'Erro ao puxar lead');
+    return;
+  }
+  const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
+  leadConversaAtual = atualizado;
+  renderizarConversa(atualizado);
+  atualizarTudo();
+}
+
+async function reabrirLeadDaConversa() {
+  if (!leadConversaAtual) return;
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/reabrir`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao reabrir conversa');
     return;
   }
   const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
