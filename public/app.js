@@ -2,6 +2,33 @@ const API = '';
 // Login da conta "de desenvolvedor" — só ela vê o botão "Limpar demo".
 // Contas admin criadas depois (ex: pro cliente final) não têm esse botão.
 const LOGIN_DESENVOLVEDOR = 'admin';
+
+// Escapa texto vindo de fora (nome do WhatsApp, mensagem do cliente, etc)
+// antes de jogar em innerHTML — sem isso, qualquer pessoa que manda
+// mensagem pro WhatsApp da loja pode injetar HTML/JS que roda na tela
+// de quem for abrir a conversa (vendedor, supervisor, admin logado).
+function escapeHtml(valor) {
+  if (valor === null || valor === undefined) return '';
+  return String(valor)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Só deixa passar URL de mídia http(s)/data — bloqueia esquema tipo
+// "javascript:" que poderia rodar código ao clicar/carregar.
+function urlMidiaSegura(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url, window.location.origin);
+    if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'data:') return escapeHtml(url);
+  } catch {
+    return null;
+  }
+  return null;
+}
 let usuarioAtual = null;
 let leadsCache = [];
 let conversasAtivasCache = [];
@@ -237,10 +264,10 @@ async function carregarLeads() {
           <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
           <div class="ticket-body">
             <div class="lead-header">
-              <strong>${l.nome_cliente || 'Cliente'}</strong>
+              <strong>${escapeHtml(l.nome_cliente) || 'Cliente'}</strong>
               <span class="badge badge-restrito">Em atendimento</span>
             </div>
-            <div class="texto">${l.interesse ? `Interesse: ${l.interesse}` : 'Sem produto identificado'}</div>
+            <div class="texto">${l.interesse ? `Interesse: ${escapeHtml(l.interesse)}` : 'Sem produto identificado'}</div>
             <div style="font-size:11px; color:var(--muted); margin-top:4px;">Já está sendo atendido por outro vendedor</div>
           </div>
         </div>
@@ -280,7 +307,7 @@ async function carregarLeads() {
       }
     }
 
-    const origemHtml = `<span class="origem-tag">Origem: ${l.origem}</span>`;
+    const origemHtml = `<span class="origem-tag">Origem: ${escapeHtml(l.origem)}</span>`;
     const temGargalo = (l.status === 'novo' && minutosEsperando >= 5) || gargaloAtendimentoHtml !== '';
 
     return `
@@ -288,10 +315,10 @@ async function carregarLeads() {
         <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
         <div class="ticket-body">
           <div class="lead-header">
-            <strong>${l.nome_cliente || l.telefone}</strong>
+            <strong>${escapeHtml(l.nome_cliente) || escapeHtml(l.telefone)}</strong>
             ${badge}
           </div>
-          <div class="texto">${l.primeira_mensagem}</div>
+          <div class="texto">${escapeHtml(l.primeira_mensagem)}</div>
           ${origemHtml}
           ${tempoHtml}
           ${gargaloAtendimentoHtml}
@@ -320,20 +347,25 @@ async function abrirConversa(leadId) {
 
 function renderizarMidia(m) {
   if (!m.midia_url) return '';
+  // urlMidiaSegura já escapa e recusa qualquer esquema que não seja
+  // http(s)/data — se vier nula, a URL era suspeita (ex: "javascript:")
+  // e a mídia simplesmente não é renderizada.
+  const url = urlMidiaSegura(m.midia_url);
+  if (!url) return '';
   if (m.midia_tipo === 'imagem') {
-    return `<a href="${m.midia_url}" target="_blank" rel="noopener"><img src="${m.midia_url}" style="max-width:100%; border-radius:8px; margin-bottom:6px; display:block;" /></a>`;
+    return `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" style="max-width:100%; border-radius:8px; margin-bottom:6px; display:block;" /></a>`;
   }
   if (m.midia_tipo === 'audio') {
-    return `<audio controls src="${m.midia_url}" style="max-width:220px; margin-bottom:6px; display:block;"></audio>`;
+    return `<audio controls src="${url}" style="max-width:220px; margin-bottom:6px; display:block;"></audio>`;
   }
   if (m.midia_tipo === 'video') {
-    return `<video controls src="${m.midia_url}" style="max-width:100%; border-radius:8px; margin-bottom:6px; display:block;"></video>`;
+    return `<video controls src="${url}" style="max-width:100%; border-radius:8px; margin-bottom:6px; display:block;"></video>`;
   }
   if (m.midia_tipo === 'documento') {
-    return `<a href="${m.midia_url}" target="_blank" rel="noopener" style="display:block; margin-bottom:6px;">📄 Abrir documento</a>`;
+    return `<a href="${url}" target="_blank" rel="noopener" style="display:block; margin-bottom:6px;">📄 Abrir documento</a>`;
   }
   if (m.midia_tipo === 'sticker') {
-    return `<img src="${m.midia_url}" style="max-width:100px; display:block; margin-bottom:4px;" />`;
+    return `<img src="${url}" style="max-width:100px; display:block; margin-bottom:4px;" />`;
   }
   return '';
 }
@@ -346,7 +378,7 @@ function renderizarConversa(lead) {
   msgsEl.innerHTML = lead.mensagens.map(m => {
     const classe = m.remetente === 'cliente' ? 'balao-cliente' : m.remetente === 'ia' ? 'balao-ia' : 'balao-vendedor';
     const hora = new Date(m.criado_em + 'Z').toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    return `<div class="balao ${classe}">${renderizarMidia(m)}${m.texto}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
+    return `<div class="balao ${classe}">${renderizarMidia(m)}${escapeHtml(m.texto)}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
   }).join('');
   msgsEl.scrollTop = msgsEl.scrollHeight;
 
@@ -519,7 +551,7 @@ async function sugerirTarefaIA() {
     return;
   }
 
-  box.innerHTML = `🤖 Sugestão: <strong>${sugestao.titulo}</strong> <button class="link-mini" style="margin-left:6px;" onclick='usarSugestaoTarefa(${JSON.stringify(sugestao).replace(/'/g, "&apos;")})'>Criar essa tarefa</button>`;
+  box.innerHTML = `🤖 Sugestão: <strong>${escapeHtml(sugestao.titulo)}</strong> <button class="link-mini" style="margin-left:6px;" onclick='usarSugestaoTarefa(${JSON.stringify(sugestao).replace(/'/g, "&apos;")})'>Criar essa tarefa</button>`;
 }
 
 function usarSugestaoTarefa(sugestao) {
@@ -704,16 +736,16 @@ async function carregarConversasAtivas(termoBusca) {
   el.innerHTML = ordenadas.map(l => {
     const nome = l.nome_cliente || l.telefone;
     const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
-    const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${l.vendedor_nome}</span>` : '';
+    const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${escapeHtml(l.vendedor_nome)}</span>` : '';
     const naoLidas = l.nao_lidas || 0;
     const badge = naoLidas > 0 ? `<span class="conversa-badge">${naoLidas > 9 ? '9+' : naoLidas}</span>` : '';
     const encerradaTag = l.status === 'encerrado' ? `<span class="conversa-vendedor-tag" style="color:var(--muted);">Encerrado</span>` : '';
     return `
       <div class="conversa-item ${naoLidas > 0 ? 'nao-lida' : ''} ${l.status === 'encerrado' ? 'encerrada' : ''}" onclick="abrirConversa(${l.id})">
-        <div class="conversa-avatar">${iniciais(nome)}</div>
+        <div class="conversa-avatar">${escapeHtml(iniciais(nome))}</div>
         <div class="conversa-info">
-          <div class="conversa-nome"><span>${nome}</span>${tagVendedor}${encerradaTag}</div>
-          <div class="conversa-preview">${preview}</div>
+          <div class="conversa-nome"><span>${escapeHtml(nome)}</span>${tagVendedor}${encerradaTag}</div>
+          <div class="conversa-preview">${escapeHtml(preview)}</div>
         </div>
         ${badge}
       </div>
@@ -736,7 +768,7 @@ function abrirNovaTarefa() {
   if (leadsDisponiveis.length === 0) {
     selLead.innerHTML = `<option value="">Nenhum lead em atendimento no momento</option>`;
   } else {
-    selLead.innerHTML = leadsDisponiveis.map(l => `<option value="${l.id}">${l.nome_cliente || l.telefone}</option>`).join('');
+    selLead.innerHTML = leadsDisponiveis.map(l => `<option value="${l.id}">${escapeHtml(l.nome_cliente) || escapeHtml(l.telefone)}</option>`).join('');
   }
 
   if (ehAdmin) {
@@ -851,7 +883,7 @@ async function carregarLembretes() {
   el.innerHTML = lembretes.map(l => `
     <div class="side-card">
       <div class="tipo-badge tipo-${l.tipo || 'outro'}">${LABELS_TIPO[l.tipo] || 'Outro'}</div>
-      <div class="lembrete-titulo">${l.titulo}</div>
+      <div class="lembrete-titulo">${escapeHtml(l.titulo)}</div>
       <div class="lembrete-quando">${new Date(l.quando).toLocaleString('pt-BR')}</div>
       <button onclick="concluirLembrete(${l.id})">Concluído</button>
     </div>
