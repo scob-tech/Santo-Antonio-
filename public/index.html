@@ -47,6 +47,12 @@
     background: var(--bg);
     color: var(--text);
     margin: 0;
+    /* Rede de segurança: a página nunca deve rolar de lado, mesmo se
+       algum texto sem espaço (email, link, telefone longo) tentar
+       forçar um elemento mais largo que a tela — o overflow-wrap nos
+       textos específicos já resolve a causa, isso aqui é o cinto de
+       segurança extra. */
+    overflow-x: hidden;
   }
 
   header {
@@ -168,7 +174,7 @@
     gap: 8px;
   }
 
-  .lead-header strong { font-size: 15px; }
+  .lead-header strong { font-size: 15px; overflow-wrap: anywhere; min-width: 0; }
 
   .badge {
     font-size: 10px;
@@ -185,7 +191,7 @@
   .badge-encerrado { background: #EEE; color: #888; }
   .badge-restrito { background: #EEE; color: #888; }
 
-  .texto { color: var(--text); margin: 6px 0; font-size: 14px; line-height: 1.4; }
+  .texto { color: var(--text); margin: 6px 0; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
 
   .origem-tag {
     font-size: 11px; color: var(--muted);
@@ -322,7 +328,7 @@
     flex-shrink: 0; font-family: 'Oswald', sans-serif;
   }
   .conversa-info { min-width: 0; flex: 1; }
-  .conversa-nome { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 6px; }
+  .conversa-nome { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 6px; overflow-wrap: anywhere; min-width: 0; }
   .conversa-vendedor-tag { font-size: 10px; color: var(--muted); font-weight: 400; }
   .conversa-preview {
     font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -617,7 +623,7 @@
   <!-- Modal: conversa completa -->
   <div class="modal-overlay" id="modal-conversa">
     <div class="modal-box" style="max-width:700px; width:90vw; display:flex; flex-direction:column; height:88vh;">
-      <h3 id="conversa-titulo" style="margin-bottom:2px;">Conversa</h3>
+      <h3 id="conversa-titulo" style="margin-bottom:2px; overflow-wrap:anywhere;">Conversa</h3>
       <div id="conversa-subtitulo" style="font-size:12px; color:var(--muted); margin-bottom:12px;"></div>
       <div id="conversa-mensagens" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding:4px 2px;"></div>
       <div id="conversa-sugestao-tarefa" style="display:none; margin-top:10px; padding:10px 12px; background:var(--bg); border-radius:8px; font-size:12px;"></div>
