@@ -330,12 +330,22 @@ app.get('/api/leads', requireAuth, (req, res) => {
     const placeholders = statusList.map(() => '?').join(',');
 
     if (statusList.length === 1 && statusList[0] === 'novo') {
-      // Fila de leads novos: vendedor sempre vê só hoje; admin pode escolher outra data
-      const dataFiltro = (req.usuario.role === 'admin' && data) ? data : new Date().toISOString().slice(0, 10);
-      leads = db.prepare(`
-        SELECT * FROM leads WHERE status IN (${placeholders}) AND date(criado_em) = date(?)
-        ORDER BY criado_em DESC
-      `).all(...statusList, dataFiltro);
+      // Fila de leads novos: por padrão mostra TODO lead ainda não puxado,
+      // de qualquer dia — um lead esperando há 2 dias é mais urgente, não
+      // menos, então não faz sentido escondê-lo da fila por padrão.
+      // O filtro de data agora é só uma lupa opcional (admin ou vendedor
+      // podem usar pra olhar só um dia específico, se quiserem).
+      if (data) {
+        leads = db.prepare(`
+          SELECT * FROM leads WHERE status IN (${placeholders}) AND date(criado_em) = date(?)
+          ORDER BY criado_em ASC
+        `).all(...statusList, data);
+      } else {
+        leads = db.prepare(`
+          SELECT * FROM leads WHERE status IN (${placeholders})
+          ORDER BY criado_em ASC
+        `).all(...statusList);
+      }
     } else {
       // Conversas ativas (em_atendimento + encerrado): sem filtro de data,
       // acumula tudo tipo WhatsApp — nunca some.
