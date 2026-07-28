@@ -8,6 +8,7 @@ const ai = require('./ai');
 const authLib = require('./auth');
 const zapi = require('./zapi');
 const claudeIA = require('./claude');
+const push = require('./push');
 const agendador = require('./agendador');
 
 const app = express();
@@ -74,6 +75,29 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   res.json(req.usuario);
+});
+
+// ---------------------------------------------------------------
+// NOTIFICAÇÃO PUSH — mensagem nova ou lead novo mesmo com o app fechado
+// ---------------------------------------------------------------
+app.get('/api/push/public-key', requireAuth, (req, res) => {
+  res.json({ publicKey: push.publicKey });
+});
+
+app.post('/api/push/subscribe', requireAuth, (req, res) => {
+  try {
+    push.salvarInscricao(req.usuario.id, req.body);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+app.post('/api/push/unsubscribe', requireAuth, (req, res) => {
+  const { endpoint } = req.body;
+  if (!endpoint) return res.status(400).json({ erro: 'endpoint é obrigatório' });
+  push.removerInscricao(endpoint);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------
@@ -166,6 +190,12 @@ if (!BOAS_VINDAS_ATIVA) {
   console.log('>> Mensagem automática de boas-vindas DESLIGADA (BOAS_VINDAS_AUTOMATICA=false) — só envio manual do vendedor está ativo.');
 }
 
+// Corpo da notificação não pode ser um romance — trunca mantendo legível.
+function truncar(texto, tamanho = 100) {
+  if (!texto) return '';
+  return texto.length > tamanho ? texto.slice(0, tamanho - 1) + '…' : texto;
+}
+
 async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo }) {
   const leadExistente = db.prepare(`
     SELECT * FROM leads WHERE telefone = ? ORDER BY criado_em DESC LIMIT 1
@@ -175,6 +205,18 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     // Conversa já em aberto (novo ou em_atendimento) — só adiciona a mensagem
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
       .run(leadExistente.id, texto, midia_url || null, midia_tipo || null);
+
+    // Notifica só se já tem dono — se ainda tá "novo" esperando alguém
+    // puxar, já mandou push na criação; não fica reenviando a cada
+    // mensagem nova pra não virar spam pra quem ainda não pegou.
+    if (leadExistente.status === 'em_atendimento' && leadExistente.vendedor_id) {
+      push.notificarVendedor(leadExistente.vendedor_id, {
+        titulo: `💬 ${leadExistente.nome_cliente || leadExistente.telefone}`,
+        corpo: truncar(texto) || (midia_tipo ? `[${midia_tipo}]` : 'Nova mensagem'),
+        leadId: leadExistente.id,
+      }).catch((err) => console.error('>> Falha ao notificar vendedor:', err.message));
+    }
+
     return { lead_id: leadExistente.id, info: 'mensagem adicionada a conversa existente (lead não duplicado)' };
   }
 
@@ -197,6 +239,21 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     }
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
       .run(leadExistente.id, texto, midia_url || null, midia_tipo || null);
+
+    if (novoStatus === 'em_atendimento') {
+      push.notificarVendedor(leadExistente.vendedor_id, {
+        titulo: `💬 ${leadExistente.nome_cliente || leadExistente.telefone}`,
+        corpo: truncar(texto) || (midia_tipo ? `[${midia_tipo}]` : 'Conversa reaberta'),
+        leadId: leadExistente.id,
+      }).catch((err) => console.error('>> Falha ao notificar vendedor:', err.message));
+    } else {
+      push.notificarTodosVendedores({
+        titulo: '🆕 Lead voltou pra fila',
+        corpo: `${leadExistente.nome_cliente || leadExistente.telefone}: ${truncar(texto)}`,
+        leadId: leadExistente.id,
+      }).catch((err) => console.error('>> Falha ao notificar vendedores:', err.message));
+    }
+
     return { lead_id: leadExistente.id, info: 'conversa antiga reaberta' };
   }
 
@@ -221,6 +278,12 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
 
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
     .run(leadId, texto, midia_url || null, midia_tipo || null);
+
+  push.notificarTodosVendedores({
+    titulo: '🆕 Novo lead',
+    corpo: `${nome_cliente || telefone}: ${truncar(texto)}`,
+    leadId,
+  }).catch((err) => console.error('>> Falha ao notificar vendedores:', err.message));
 
   if (boasVindas) {
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'ia', ?)`)

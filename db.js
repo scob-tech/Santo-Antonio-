@@ -53,6 +53,29 @@ db.exec(`
     feito INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (lead_id) REFERENCES leads(id)
   );
+
+  -- Um "endereço" de notificação por navegador/aparelho em que o vendedor
+  -- ativou. Uma pessoa pode ter mais de um (celular + computador), por
+  -- isso não é uma coluna na tabela vendedores, é tabela própria.
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendedor_id INTEGER NOT NULL,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    FOREIGN KEY (vendedor_id) REFERENCES vendedores(id)
+  );
+
+  -- Identidade do servidor pra poder mandar push (protocolo VAPID).
+  -- Gerada sozinha na primeira vez que o servidor sobe (ver getOuCriarChavesVapid
+  -- abaixo) e guardada aqui, no Volume persistente — assim não precisa
+  -- configurar nenhuma variável manual no Railway pra isso funcionar.
+  CREATE TABLE IF NOT EXISTS vapid_keys (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    public_key TEXT NOT NULL,
+    private_key TEXT NOT NULL
+  );
 `);
 
 // ---------------------------------------------------------------
@@ -119,4 +142,23 @@ if (!existeAdmin) {
   console.log('>> Conta admin criada — login: admin | senha: admin123 (troque assim que possível)');
 }
 
+// ---------------------------------------------------------------
+// Chaves VAPID pra notificação push — gera na primeira vez que o servidor
+// sobe e guarda no banco (Volume persistente), pra sempre usar as MESMAS
+// chaves depois disso. Trocar a chave pública invalidaria toda inscrição
+// de notificação que os vendedores já tivessem ativado.
+// ---------------------------------------------------------------
+function getOuCriarChavesVapid() {
+  const existente = db.prepare(`SELECT public_key, private_key FROM vapid_keys WHERE id = 1`).get();
+  if (existente) return { publicKey: existente.public_key, privateKey: existente.private_key };
+
+  const webpush = require('web-push');
+  const chaves = webpush.generateVAPIDKeys();
+  db.prepare(`INSERT INTO vapid_keys (id, public_key, private_key) VALUES (1, ?, ?)`)
+    .run(chaves.publicKey, chaves.privateKey);
+  console.log('>> Chaves VAPID geradas e salvas (primeira vez) — notificação push pronta pra uso.');
+  return { publicKey: chaves.publicKey, privateKey: chaves.privateKey };
+}
+
 module.exports = db;
+module.exports.getOuCriarChavesVapid = getOuCriarChavesVapid;
