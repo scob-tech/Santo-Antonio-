@@ -497,6 +497,31 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Reabre manualmente uma conversa encerrada — mesmo dono (ou admin/supervisor)
+// que puderam encerrar também podem reabrir. Segue a mesma regra do reabrir
+// automático (quando o cliente escreve de novo sozinho): não mexe em
+// resultado/valor_venda/motivo_perda já registrados, só volta o status —
+// se já tinha uma venda contabilizada, ela continua valendo no relatório.
+app.post('/api/leads/:id/reabrir', requireAuth, (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (lead.status !== 'encerrado') {
+    return res.status(400).json({ erro: 'esse lead não está encerrado' });
+  }
+
+  const dono = lead.vendedor_id === req.usuario.id;
+  if (!ehGestor(req.usuario) && !dono) {
+    return res.status(403).json({ erro: 'só quem atendeu (ou o admin) pode reabrir essa conversa' });
+  }
+
+  // Se o lead nunca teve dono (foi encerrado sem ninguém puxar), quem
+  // reabre assume o atendimento — mesma regra do claim normal.
+  db.prepare(`UPDATE leads SET status = 'em_atendimento', vendedor_id = ? WHERE id = ?`)
+    .run(lead.vendedor_id || req.usuario.id, req.params.id);
+
+  res.json({ ok: true });
+});
+
 // Vendedor envia mensagem pro cliente — só o dono do lead ou o admin
 app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   const { texto, midia_base64, midia_tipo, midia_nome } = req.body;
