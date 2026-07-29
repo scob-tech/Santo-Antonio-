@@ -181,8 +181,51 @@ async function rodarAnaliseDiariaAgora() {
     alert(resultado.erro || (resultado.motivo === 'ia_nao_configurada' ? 'IA não configurada ainda nesse servidor.' : 'Não rodou.'));
     return;
   }
-  alert(`Análise concluída: ${resultado.conversas_revisadas} conversa(s) revisada(s), ${resultado.tarefas_criadas} tarefa(s) criada(s).`);
+
+  renderizarResultadoAnalise(resultado);
   carregarLembretes();
+}
+
+function renderizarResultadoAnalise(r) {
+  const modalId = 'modal-analise-resultado';
+  let html = `
+    <div class="relatorio-grid">
+      <div class="relatorio-metric"><div class="valor">${r.conversas_revisadas}</div><div class="label">Conversas revisadas</div></div>
+      <div class="relatorio-metric"><div class="valor">${r.encerrados_analisados}</div><div class="label">Encerradas classificadas</div></div>
+      <div class="relatorio-metric"><div class="valor">${r.tarefas_criadas_total}</div><div class="label">Tarefas criadas</div></div>
+    </div>
+  `;
+
+  if (r.encerrados_classificados && r.encerrados_classificados.length > 0) {
+    html += `<div class="panel-title" style="font-size:11px; margin-top:14px;">Conversas classificadas pela IA</div>`;
+    html += r.encerrados_classificados.map(e => {
+      const nome = escapeHtml(e.nome_cliente) || escapeHtml(e.telefone);
+      const badge = e.resultado === 'convertido'
+        ? `<span class="badge badge-atendimento" style="background:var(--green-bg); color:var(--green);">Convertido — R$ ${(e.valor_venda || 0).toLocaleString('pt-BR')}</span>`
+        : e.resultado === 'perdido'
+          ? `<span class="badge badge-encerrado">Perdido — ${escapeHtml(e.motivo_perda)}</span>`
+          : `<span class="badge badge-restrito">Indefinido</span>`;
+      return `
+        <div class="relatorio-vendedor-row tarefa-clicavel" onclick="irParaConversa(${e.lead_id}, '${modalId}')" style="cursor:pointer; flex-direction:column; align-items:flex-start; gap:4px;">
+          <div style="display:flex; justify-content:space-between; width:100%;"><strong style="font-size:13px;">${nome}</strong>${badge}</div>
+          ${e.resumo ? `<div style="font-size:12px; color:var(--muted);">${escapeHtml(e.resumo)}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  const tarefas = r.tarefas_criadas || [];
+  if (tarefas.length > 0) {
+    html += `<div class="panel-title" style="font-size:11px; margin-top:14px;">Tarefas criadas — clique pra resolver</div>`;
+    html += tarefas.map(t => tarefaClicavelHtml(t, modalId)).join('');
+  }
+
+  if (r.encerrados_classificados.length === 0 && r.tarefas_criadas.length === 0) {
+    html += `<div class="empty-state" style="padding:14px; font-size:12px;">Nada novo pra analisar hoje — tudo em dia.</div>`;
+  }
+
+  document.getElementById('analise-resultado-conteudo').innerHTML = html;
+  abrirModal(modalId);
 }
 
 async function sair() {
@@ -903,6 +946,32 @@ async function confirmarTarefa() {
   carregarLembretes();
 }
 
+// ---------------- Helper compartilhado: item de tarefa clicável ----------------
+// Usado tanto no relatório quanto na tela de resultado da análise diária —
+// clicar em qualquer tarefa (gargalo, oportunidade, pós-venda, esquecido)
+// fecha o modal atual e vai direto pra conversa do cliente.
+const ICONE_CATEGORIA = {
+  gargalo: '⚠️', oportunidade: '💡', pos_venda: '📦', esquecido: '🔍',
+};
+
+function irParaConversa(leadId, modalOrigemId) {
+  if (modalOrigemId) fecharModal(modalOrigemId);
+  abrirConversa(leadId);
+}
+
+function tarefaClicavelHtml(t, modalOrigemId, categoria) {
+  const nome = escapeHtml(t.nome_cliente) || escapeHtml(t.telefone);
+  const tituloSemEmoji = escapeHtml((t.titulo || '').replace(/^🤖\s*/, ''));
+  const icone = ICONE_CATEGORIA[categoria || t.categoria] || '📋';
+  const feito = t.feito ? 'opacity:0.55; text-decoration:line-through;' : '';
+  return `
+    <div class="relatorio-vendedor-row tarefa-clicavel" onclick="irParaConversa(${t.lead_id}, '${modalOrigemId}')" style="cursor:pointer; align-items:flex-start; ${feito}">
+      <span>${icone} ${tituloSemEmoji}<br><span style="font-size:11px; color:var(--muted);">${nome}</span></span>
+      <span style="font-size:11px; color:var(--navy); white-space:nowrap;">Abrir →</span>
+    </div>
+  `;
+}
+
 // ---------------- Relatório do dia ----------------
 function metricasHtml(m) {
   return `
@@ -945,6 +1014,12 @@ async function abrirRelatorio() {
     `).join('');
   }
 
+  if (r.tarefas_ia && r.tarefas_ia.length > 0) {
+    const pendentes = r.tarefas_ia.filter(t => !t.feito).length;
+    html += `<div class="panel-title" style="font-size:11px; margin-top:16px;">🤖 Sinalizado pela análise da IA ${pendentes > 0 ? `(${pendentes} pendente${pendentes > 1 ? 's' : ''})` : '(tudo resolvido)'}</div>`;
+    html += r.tarefas_ia.map(t => tarefaClicavelHtml(t, 'modal-relatorio')).join('');
+  }
+
   document.getElementById('relatorio-conteudo').innerHTML = html;
   abrirModal('modal-relatorio');
 }
@@ -962,11 +1037,12 @@ async function carregarLembretes() {
   }
 
   el.innerHTML = lembretes.map(l => `
-    <div class="side-card">
+    <div class="side-card lembrete-clicavel" onclick="abrirConversa(${l.lead_id})" style="cursor:pointer;">
       <div class="tipo-badge tipo-${l.tipo || 'outro'}">${LABELS_TIPO[l.tipo] || 'Outro'}</div>
       <div class="lembrete-titulo">${escapeHtml(l.titulo)}</div>
+      <div style="font-size:11px; color:var(--muted); margin-top:2px;">${escapeHtml(l.nome_cliente) || escapeHtml(l.telefone)}</div>
       <div class="lembrete-quando">${new Date(l.quando).toLocaleString('pt-BR')}</div>
-      <button onclick="concluirLembrete(${l.id})">Concluído</button>
+      <button onclick="event.stopPropagation(); concluirLembrete(${l.id})">Concluído</button>
     </div>
   `).join('');
 }

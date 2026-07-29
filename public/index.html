@@ -226,6 +226,9 @@
     border: 1px solid var(--border);
   }
 
+  .lembrete-clicavel:hover { border-color: var(--navy); box-shadow: 0 2px 6px rgba(43,57,144,0.12); }
+  .tarefa-clicavel:hover { background: var(--navy-bg) !important; }
+
   .vendedor-name { font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 14px; }
   .vendedor-count { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
@@ -616,6 +619,17 @@
       <div id="relatorio-conteudo"></div>
       <div class="modal-actions">
         <button class="cancelar" onclick="fecharModal('modal-relatorio')">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: resultado da análise diária (manual ou automática) -->
+  <div class="modal-overlay" id="modal-analise-resultado">
+    <div class="modal-box" style="max-width:480px;">
+      <h3>🤖 Resultado da análise diária</h3>
+      <div id="analise-resultado-conteudo"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-analise-resultado')">Fechar</button>
       </div>
     </div>
   </div>
