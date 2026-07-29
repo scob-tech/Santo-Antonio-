@@ -99,7 +99,17 @@ if (!colunaExiste('vendedores', 'role')) {
 if (!colunaExiste('leads', 'interesse')) {
   db.exec(`ALTER TABLE leads ADD COLUMN interesse TEXT`);
 }
-// resultado do atendimento — preenchido obrigatoriamente ao encerrar
+// resumo da análise da IA — guardado pra poder mostrar na tela de
+// resultado da análise diária e no relatório, sem precisar chamar a IA
+// de novo só pra reexibir o que ela já disse uma vez
+if (!colunaExiste('leads', 'resumo_ia')) {
+  db.exec(`ALTER TABLE leads ADD COLUMN resumo_ia TEXT`);
+}
+// quando o lembrete foi criado — precisa pra filtrar "tarefas que a IA
+// criou HOJE" no relatório do dia (lembretes antigas não tinham essa coluna)
+if (!colunaExiste('lembretes', 'criado_em')) {
+  db.exec(`ALTER TABLE lembretes ADD COLUMN criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))`);
+}
 if (!colunaExiste('leads', 'resultado')) {
   db.exec(`ALTER TABLE leads ADD COLUMN resultado TEXT`); // 'convertido' | 'perdido'
 }

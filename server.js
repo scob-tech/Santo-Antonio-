@@ -819,7 +819,15 @@ function calcularRelatorio(dataISO, filtroVendedorId) {
 
   if (filtroVendedorId) {
     const meus = leadsDoDia.filter(l => l.vendedor_id === filtroVendedorId);
-    return { data: dataISO, escopo: 'proprio', ...metricasDe(meus) };
+    const tarefasIA = db.prepare(`
+      SELECT lembretes.id, lembretes.lead_id, lembretes.titulo, lembretes.tipo, lembretes.feito,
+             leads.nome_cliente, leads.telefone
+      FROM lembretes
+      JOIN leads ON leads.id = lembretes.lead_id
+      WHERE lembretes.titulo LIKE '🤖%' AND date(lembretes.criado_em) = date(?) AND lembretes.vendedor_id = ?
+      ORDER BY lembretes.feito ASC, lembretes.criado_em ASC
+    `).all(dataISO, filtroVendedorId);
+    return { data: dataISO, escopo: 'proprio', ...metricasDe(meus), tarefas_ia: tarefasIA };
   }
 
   const geral = metricasDe(leadsDoDia);
@@ -830,7 +838,20 @@ function calcularRelatorio(dataISO, filtroVendedorId) {
     return { vendedor: v.nome, ...metricasDe(meus) };
   }).filter(Boolean);
 
-  return { data: dataISO, escopo: 'geral', ...geral, por_vendedor: porVendedor };
+  // Tarefas que a análise diária da IA criou nesse dia (gargalo, oportunidade,
+  // pós-venda, lead esquecido) — é o que liga o relatório à análise diária:
+  // não é só um número, dá pra ver exatamente o que a IA sinalizou e clicar
+  // pra resolver.
+  const tarefasIA = db.prepare(`
+    SELECT lembretes.id, lembretes.lead_id, lembretes.titulo, lembretes.tipo, lembretes.feito,
+           leads.nome_cliente, leads.telefone
+    FROM lembretes
+    JOIN leads ON leads.id = lembretes.lead_id
+    WHERE lembretes.titulo LIKE '🤖%' AND date(lembretes.criado_em) = date(?)
+    ORDER BY lembretes.feito ASC, lembretes.criado_em ASC
+  `).all(dataISO);
+
+  return { data: dataISO, escopo: 'geral', ...geral, por_vendedor: porVendedor, tarefas_ia: tarefasIA };
 }
 
 // Excluir um lead (e tudo ligado a ele) — só admin. Útil pra limpar dado de

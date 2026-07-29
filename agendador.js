@@ -1,15 +1,21 @@
 // agendador.js
-// Roda a análise de fim de dia sozinha, 1x por dia, às 18h (horário de
+// Roda a análise de fim de dia sozinha, 1x por dia, às 21h (horário de
 // Brasília — o Brasil não tem mais horário de verão desde 2019, então
-// UTC-3 é fixo o ano todo).
+// UTC-3 é fixo o ano todo). Rodar às 21h em vez de 18h dá tempo de
+// abranger o expediente inteiro da loja antes de analisar o dia.
 //
 // Em vez de sugerir tarefa a cada mensagem (o que gastaria token o dia
 // inteiro), a IA só é chamada uma vez por conversa em aberto, no fim do
 // dia, pra identificar gargalos e oportunidades de venda complementar —
 // e já cria a tarefa na agenda sozinha (o vendedor só confere/conclui).
 //
+// Além de fazer o trabalho, essa função também VOLTA um relatório
+// detalhado (não só contagem) — item por item do que foi decidido e
+// quais tarefas foram criadas — pra alimentar a tela de resultado da
+// análise manual e a seção da IA no relatório do dia.
+//
 // Limitação: o "já rodou hoje" fica em memória — se o servidor reiniciar
-// (redeploy) depois das 18h no mesmo dia, pode rodar de novo e duplicar
+// (redeploy) depois das 21h no mesmo dia, pode rodar de novo e duplicar
 // alguma tarefa. Baixo impacto (o vendedor só vê a tarefa 2x), mas fica
 // registrado.
 
@@ -37,8 +43,9 @@ async function rodarAnaliseDiaria() {
   }
 
   const quando = amanha8hISO();
-  let tarefasCriadas = 0;
-  let encerradosAnalisados = 0;
+  const encerradosClassificados = [];
+  const tarefasCriadas = [];
+  const leadsEsquecidos = [];
 
   // 0) Conversas ENCERRADAS ainda sem resultado definido: a IA lê e decide
   // sozinha se converteu/perdeu, valor e motivo — sem confirmação humana
@@ -51,25 +58,45 @@ async function rodarAnaliseDiaria() {
     if (mensagens.length === 0) continue;
 
     const analise = await claudeIA.analisarConversa(mensagens);
-    encerradosAnalisados++;
     if (!analise || !analise.resultado_sugerido) continue;
 
+    const resumo = analise.resumo || null;
+
     if (analise.resultado_sugerido === 'convertido') {
-      db.prepare(`UPDATE leads SET resultado = 'convertido', valor_venda = ? WHERE id = ?`)
-        .run(analise.valor_sugerido || 0, lead.id);
+      db.prepare(`UPDATE leads SET resultado = 'convertido', valor_venda = ?, resumo_ia = ? WHERE id = ?`)
+        .run(analise.valor_sugerido || 0, resumo, lead.id);
+      encerradosClassificados.push({
+        lead_id: lead.id, nome_cliente: lead.nome_cliente, telefone: lead.telefone,
+        resultado: 'convertido', valor_venda: analise.valor_sugerido || 0, motivo_perda: null, resumo,
+      });
       if (lead.vendedor_id) {
         const daqui3dias = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
-        db.prepare(`
+        const titulo = `🤖 Pós-venda — confirmar se ${lead.nome_cliente || lead.telefone} recebeu tudo certo`;
+        const info = db.prepare(`
           INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
           VALUES (?, ?, ?, ?, 'pos_venda')
-        `).run(lead.id, lead.vendedor_id, `🤖 Pós-venda — confirmar se ${lead.nome_cliente || lead.telefone} recebeu tudo certo`, daqui3dias);
+        `).run(lead.id, lead.vendedor_id, titulo, daqui3dias);
+        tarefasCriadas.push({
+          lembrete_id: info.lastInsertRowid, lead_id: lead.id,
+          nome_cliente: lead.nome_cliente, telefone: lead.telefone,
+          titulo, tipo: 'pos_venda', categoria: 'pos_venda',
+        });
       }
     } else if (analise.resultado_sugerido === 'perdido') {
-      db.prepare(`UPDATE leads SET resultado = 'perdido', motivo_perda = ? WHERE id = ?`)
-        .run(analise.motivo_perda_sugerido || 'não identificado pela IA', lead.id);
+      const motivo = analise.motivo_perda_sugerido || 'não identificado pela IA';
+      db.prepare(`UPDATE leads SET resultado = 'perdido', motivo_perda = ?, resumo_ia = ? WHERE id = ?`)
+        .run(motivo, resumo, lead.id);
+      encerradosClassificados.push({
+        lead_id: lead.id, nome_cliente: lead.nome_cliente, telefone: lead.telefone,
+        resultado: 'perdido', valor_venda: null, motivo_perda: motivo, resumo,
+      });
     } else {
       // "indefinido" — marca assim mesmo, pra não ficar reanalisando pra sempre
-      db.prepare(`UPDATE leads SET resultado = 'indefinido' WHERE id = ?`).run(lead.id);
+      db.prepare(`UPDATE leads SET resultado = 'indefinido', resumo_ia = ? WHERE id = ?`).run(resumo, lead.id);
+      encerradosClassificados.push({
+        lead_id: lead.id, nome_cliente: lead.nome_cliente, telefone: lead.telefone,
+        resultado: 'indefinido', valor_venda: null, motivo_perda: null, resumo,
+      });
     }
   }
 
@@ -84,19 +111,29 @@ async function rodarAnaliseDiaria() {
     if (!analise) continue;
 
     if (analise.gargalo && analise.gargalo.existe && analise.gargalo.titulo) {
-      db.prepare(`
+      const titulo = `🤖 ${analise.gargalo.titulo}`;
+      const info = db.prepare(`
         INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
         VALUES (?, ?, ?, ?, ?)
-      `).run(lead.id, lead.vendedor_id, `🤖 ${analise.gargalo.titulo}`, quando, analise.gargalo.tipo || 'outro');
-      tarefasCriadas++;
+      `).run(lead.id, lead.vendedor_id, titulo, quando, analise.gargalo.tipo || 'outro');
+      tarefasCriadas.push({
+        lembrete_id: info.lastInsertRowid, lead_id: lead.id,
+        nome_cliente: lead.nome_cliente, telefone: lead.telefone,
+        titulo, tipo: analise.gargalo.tipo || 'outro', categoria: 'gargalo',
+      });
     }
 
     if (analise.oportunidade && analise.oportunidade.existe && analise.oportunidade.titulo) {
-      db.prepare(`
+      const titulo = `🤖 ${analise.oportunidade.titulo}`;
+      const info = db.prepare(`
         INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
         VALUES (?, ?, ?, ?, 'oportunidade')
-      `).run(lead.id, lead.vendedor_id, `🤖 ${analise.oportunidade.titulo}`, quando);
-      tarefasCriadas++;
+      `).run(lead.id, lead.vendedor_id, titulo, quando);
+      tarefasCriadas.push({
+        lembrete_id: info.lastInsertRowid, lead_id: lead.id,
+        nome_cliente: lead.nome_cliente, telefone: lead.telefone,
+        titulo, tipo: 'oportunidade', categoria: 'oportunidade',
+      });
     }
   }
 
@@ -112,29 +149,44 @@ async function rodarAnaliseDiaria() {
         SELECT id FROM lembretes WHERE lead_id = ? AND titulo LIKE '🤖 Ninguém puxou%'
       `).get(lead.id);
       if (jaExiste) continue;
-      db.prepare(`
+      const titulo = `🤖 Ninguém puxou o lead de ${lead.nome_cliente || lead.telefone} ainda — verificar fila`;
+      const info = db.prepare(`
         INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
         VALUES (?, ?, ?, ?, 'outro')
-      `).run(lead.id, admin.id, `🤖 Ninguém puxou o lead de ${lead.nome_cliente || lead.telefone} ainda — verificar fila`, quando);
-      tarefasCriadas++;
+      `).run(lead.id, admin.id, titulo, quando);
+      const item = {
+        lembrete_id: info.lastInsertRowid, lead_id: lead.id,
+        nome_cliente: lead.nome_cliente, telefone: lead.telefone,
+        titulo, tipo: 'outro', categoria: 'esquecido',
+      };
+      tarefasCriadas.push(item);
+      leadsEsquecidos.push(item);
     }
   }
 
-  console.log(`>> Análise diária concluída: ${leadsAbertos.length} conversas em aberto revisadas, ${encerradosAnalisados} encerrada(s) classificada(s), ${tarefasCriadas} tarefa(s) criada(s).`);
-  return { rodou: true, conversas_revisadas: leadsAbertos.length, encerrados_analisados: encerradosAnalisados, tarefas_criadas: tarefasCriadas };
+  console.log(`>> Análise diária concluída: ${leadsAbertos.length} conversas em aberto revisadas, ${encerradosClassificados.length} encerrada(s) classificada(s), ${tarefasCriadas.length} tarefa(s) criada(s).`);
+  return {
+    rodou: true,
+    conversas_revisadas: leadsAbertos.length,
+    encerrados_analisados: encerradosClassificados.length,
+    tarefas_criadas_total: tarefasCriadas.length,
+    encerrados_classificados: encerradosClassificados,
+    tarefas_criadas: tarefasCriadas,
+    leads_esquecidos: leadsEsquecidos,
+  };
 }
 
-// Verifica a cada 5 minutos se já são 18h (BRT) e ainda não rodou hoje.
+// Verifica a cada 5 minutos se já são 21h (BRT) e ainda não rodou hoje.
 function iniciarAgendador() {
   setInterval(async () => {
     const { hora, dataISO } = agoraBRT();
-    if (hora === 18 && ultimaExecucaoData !== dataISO) {
+    if (hora === 21 && ultimaExecucaoData !== dataISO) {
       ultimaExecucaoData = dataISO;
-      console.log('>> Rodando análise diária automática (18h)...');
+      console.log('>> Rodando análise diária automática (21h)...');
       await rodarAnaliseDiaria();
     }
   }, 5 * 60 * 1000);
-  console.log('>> Agendador da análise diária ativo (roda sozinho às 18h, horário de Brasília).');
+  console.log('>> Agendador da análise diária ativo (roda sozinho às 21h, horário de Brasília).');
 }
 
 module.exports = { iniciarAgendador, rodarAnaliseDiaria };
