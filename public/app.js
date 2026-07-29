@@ -33,6 +33,10 @@ let usuarioAtual = null;
 let leadsCache = [];
 let conversasAtivasCache = [];
 let vendedoresCache = [];
+// Provisório: enquanto não existe uma tela própria pra histórico de encerradas,
+// a lista de conversas mostra só 2 encerradas por padrão pra não poluir o
+// dashboard, com botão "Ver mais" pra expandir sob demanda.
+let mostrarTodasEncerradas = false;
 
 const LABELS_TIPO = {
   orcamento: 'Orçamento', catalogo: 'Catálogo', frete: 'Frete',
@@ -843,7 +847,16 @@ async function carregarConversasAtivas(termoBusca) {
     return tb - ta;
   });
 
-  el.innerHTML = ordenadas.map(l => {
+  // Provisório: só as 2 encerradas mais recentes aparecem por padrão, com
+  // botão "Ver mais" pra expandir todas (evita poluir o dashboard até existir
+  // uma tela própria de histórico).
+  const naoEncerradas = ordenadas.filter(l => l.status !== 'encerrado');
+  const encerradas = ordenadas.filter(l => l.status === 'encerrado');
+  const totalEncerradas = encerradas.length;
+  const encerradasVisiveis = (termoBusca || mostrarTodasEncerradas) ? encerradas : encerradas.slice(0, 2);
+  const listaParaRenderizar = [...naoEncerradas, ...encerradasVisiveis];
+
+  const renderizarItem = (l) => {
     const nome = l.nome_cliente || l.telefone;
     const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
     const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${escapeHtml(l.vendedor_nome)}</span>` : '';
@@ -864,7 +877,17 @@ async function carregarConversasAtivas(termoBusca) {
         ${badge}
       </div>
     `;
-  }).join('');
+  };
+
+  let html = listaParaRenderizar.map(renderizarItem).join('');
+
+  if (!termoBusca && totalEncerradas > 2) {
+    html += mostrarTodasEncerradas
+      ? `<button class="link-mini" style="width:100%; text-align:center; margin-top:4px;" onclick="mostrarTodasEncerradas = false; carregarConversasAtivas();">Ver menos</button>`
+      : `<button class="link-mini" style="width:100%; text-align:center; margin-top:4px;" onclick="mostrarTodasEncerradas = true; carregarConversasAtivas();">Ver mais encerradas (${totalEncerradas - 2})</button>`;
+  }
+
+  el.innerHTML = html;
 }
 
 // ---------------- Nova tarefa (agenda) ----------------
@@ -995,11 +1018,11 @@ async function carregarLembretes() {
   }
 
   el.innerHTML = lembretes.map(l => `
-    <div class="side-card">
+    <div class="side-card lembrete-clicavel" onclick="abrirConversa(${l.lead_id})">
       <div class="tipo-badge tipo-${l.tipo || 'outro'}">${LABELS_TIPO[l.tipo] || 'Outro'}</div>
       <div class="lembrete-titulo">${escapeHtml(l.titulo)}</div>
       <div class="lembrete-quando">${new Date(l.quando).toLocaleString('pt-BR')}</div>
-      <button onclick="concluirLembrete(${l.id})">Concluído</button>
+      <button onclick="event.stopPropagation(); concluirLembrete(${l.id})">Concluído</button>
     </div>
   `).join('');
 }
