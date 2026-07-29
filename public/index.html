@@ -28,6 +28,8 @@
     --green: #16A34A;
     --green-bg: #E9F7EF;
     --navy-bg: #E9EAF6;
+    --orange: #F5820D;
+    --orange-bg: #FFF2E4;
   }
 
   * { box-sizing: border-box; }
@@ -117,14 +119,6 @@
     gap: 24px;
     align-items: start;
   }
-
-  /* Itens de grid/flex têm min-width:auto por padrão — ignora qualquer
-     min-width:0 ou overflow-wrap definido mais fundo na árvore. Sem isso
-     aqui, o "Fila de Atendimento" e o "Vendedores" (filhos diretos do
-     grid) recusam encolher pra caber numa coluna só no celular, mesmo
-     com o grid já colapsado — foi a causa real do painel ficar largo
-     demais e precisar rolar de lado no iPhone. */
-  .grid > * { min-width: 0; }
 
   .panel-title {
     font-family: 'Oswald', sans-serif;
@@ -233,9 +227,6 @@
     margin-bottom: 10px;
     border: 1px solid var(--border);
   }
-
-  .lembrete-clicavel:hover { border-color: var(--navy); box-shadow: 0 2px 6px rgba(43,57,144,0.12); }
-  .tarefa-clicavel:hover { background: var(--navy-bg) !important; }
 
   .vendedor-name { font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 14px; }
   .vendedor-count { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -349,11 +340,17 @@
   .conversa-item.nao-lida { border-color: var(--green); background: var(--green-bg); }
   .conversa-item.nao-lida .conversa-preview { color: var(--text); font-weight: 600; }
   .conversa-item.encerrada { opacity: 0.6; }
+  .conversa-item.sem-resposta { border-color: var(--orange); background: var(--orange-bg); }
+  .conversa-item.sem-resposta .conversa-preview { color: var(--text); font-weight: 600; }
   .conversa-badge {
     background: var(--green); color: white; font-size: 11px; font-weight: 700;
     min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center;
     justify-content: center; padding: 0 5px; flex-shrink: 0;
   }
+  .conversa-hora {
+    font-size: 10px; color: var(--muted); white-space: nowrap; flex-shrink: 0; margin-left: 4px;
+  }
+  .conversa-item.sem-resposta .conversa-hora { color: var(--orange); font-weight: 700; }
 
   /* ---------------------------------------------------------------
      MOBILE — telas até 768px (celular). Empilha a fila e a barra
@@ -627,17 +624,6 @@
       <div id="relatorio-conteudo"></div>
       <div class="modal-actions">
         <button class="cancelar" onclick="fecharModal('modal-relatorio')">Fechar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal: resultado da análise diária (manual ou automática) -->
-  <div class="modal-overlay" id="modal-analise-resultado">
-    <div class="modal-box" style="max-width:480px;">
-      <h3>🤖 Resultado da análise diária</h3>
-      <div id="analise-resultado-conteudo"></div>
-      <div class="modal-actions">
-        <button class="cancelar" onclick="fecharModal('modal-analise-resultado')">Fechar</button>
       </div>
     </div>
   </div>
