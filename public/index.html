@@ -118,6 +118,14 @@
     align-items: start;
   }
 
+  /* Itens de grid/flex têm min-width:auto por padrão — ignora qualquer
+     min-width:0 ou overflow-wrap definido mais fundo na árvore. Sem isso
+     aqui, o "Fila de Atendimento" e o "Vendedores" (filhos diretos do
+     grid) recusam encolher pra caber numa coluna só no celular, mesmo
+     com o grid já colapsado — foi a causa real do painel ficar largo
+     demais e precisar rolar de lado no iPhone. */
+  .grid > * { min-width: 0; }
+
   .panel-title {
     font-family: 'Oswald', sans-serif;
     font-weight: 600;
