@@ -42,6 +42,11 @@
        ficar do mesmo tamanho tanto instalado quanto no Safari normal. */
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* Mesma rede de segurança contra rolagem lateral que existe no body
+       (linha abaixo) — mas no iOS instalado como PWA (Adicionar à Tela de
+       Início) é frequentemente o <html>, não o <body>, quem rola de verdade.
+       Só travar o body não é suficiente nesse modo, por isso trava os dois. */
+    overflow-x: hidden;
   }
 
   body {
@@ -119,6 +124,11 @@
     gap: 24px;
     align-items: start;
   }
+  /* Itens diretos de um display:grid têm min-width:auto por padrão, o que
+     ignora min-width:0 definido mais fundo na árvore e deixa o conteúdo
+     (texto, botões) estourar a coluna e forçar rolagem horizontal —
+     sobretudo no mobile, onde a coluna vira 1fr de largura total. */
+  .grid > * { min-width: 0; }
 
   .panel-title {
     font-family: 'Oswald', sans-serif;
@@ -282,6 +292,14 @@
   .modal-box {
     background: white; border-radius: 10px; padding: 24px; width: 100%; max-width: 380px;
     max-height: 85vh; overflow-y: auto;
+  }
+  /* O modal de conversa (mensagens, mídia, histórico) precisa de mais
+     espaço que os modais de formulário padrão — 380px deixava tudo
+     espremido. Só afeta desktop; no mobile o modal já vira quase tela
+     cheia via a regra #modal-conversa .modal-box dentro do @media abaixo. */
+  #modal-conversa .modal-box {
+    max-width: 640px;
+    max-height: 90vh;
   }
   .modal-box h3 {
     font-family: 'Oswald', sans-serif; font-size: 15px; text-transform: uppercase;
