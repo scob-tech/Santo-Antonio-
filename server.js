@@ -488,8 +488,8 @@ app.post('/api/leads/:id/claim', requireAuth, (req, res) => {
   // Cria automaticamente um lembrete de follow-up daqui a 2 dias
   const daqui2dias = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare(`
-    INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
-    VALUES (?, ?, ?, ?, 'ligacao')
+    INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo, criado_em)
+    VALUES (?, ?, ?, ?, 'ligacao', strftime('%Y-%m-%d %H:%M:%f','now'))
   `).run(req.params.id, vendedorId, `Verificar se ${lead.nome_cliente || lead.telefone} fechou o pedido`, daqui2dias);
 
   res.json({ ok: true });
@@ -687,8 +687,8 @@ app.post('/api/lembretes', requireAuth, (req, res) => {
   const vendedorDestino = ehGestor(req.usuario) && vendedor_id ? vendedor_id : req.usuario.id;
 
   const info = db.prepare(`
-    INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo, criado_em)
+    VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
   `).run(lead_id, vendedorDestino, titulo, quando, tipoFinal);
 
   res.status(201).json({ ok: true, id: info.lastInsertRowid });

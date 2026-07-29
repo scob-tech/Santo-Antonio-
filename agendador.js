@@ -73,8 +73,8 @@ async function rodarAnaliseDiaria() {
         const daqui3dias = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
         const titulo = `🤖 Pós-venda — confirmar se ${lead.nome_cliente || lead.telefone} recebeu tudo certo`;
         const info = db.prepare(`
-          INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
-          VALUES (?, ?, ?, ?, 'pos_venda')
+          INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo, criado_em)
+          VALUES (?, ?, ?, ?, 'pos_venda', strftime('%Y-%m-%d %H:%M:%f','now'))
         `).run(lead.id, lead.vendedor_id, titulo, daqui3dias);
         tarefasCriadas.push({
           lembrete_id: info.lastInsertRowid, lead_id: lead.id,
@@ -113,8 +113,8 @@ async function rodarAnaliseDiaria() {
     if (analise.gargalo && analise.gargalo.existe && analise.gargalo.titulo) {
       const titulo = `🤖 ${analise.gargalo.titulo}`;
       const info = db.prepare(`
-        INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo, criado_em)
+        VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
       `).run(lead.id, lead.vendedor_id, titulo, quando, analise.gargalo.tipo || 'outro');
       tarefasCriadas.push({
         lembrete_id: info.lastInsertRowid, lead_id: lead.id,
@@ -126,8 +126,8 @@ async function rodarAnaliseDiaria() {
     if (analise.oportunidade && analise.oportunidade.existe && analise.oportunidade.titulo) {
       const titulo = `🤖 ${analise.oportunidade.titulo}`;
       const info = db.prepare(`
-        INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
-        VALUES (?, ?, ?, ?, 'oportunidade')
+        INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo, criado_em)
+        VALUES (?, ?, ?, ?, 'oportunidade', strftime('%Y-%m-%d %H:%M:%f','now'))
       `).run(lead.id, lead.vendedor_id, titulo, quando);
       tarefasCriadas.push({
         lembrete_id: info.lastInsertRowid, lead_id: lead.id,
@@ -151,8 +151,8 @@ async function rodarAnaliseDiaria() {
       if (jaExiste) continue;
       const titulo = `🤖 Ninguém puxou o lead de ${lead.nome_cliente || lead.telefone} ainda — verificar fila`;
       const info = db.prepare(`
-        INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo)
-        VALUES (?, ?, ?, ?, 'outro')
+        INSERT INTO lembretes (lead_id, vendedor_id, titulo, quando, tipo, criado_em)
+        VALUES (?, ?, ?, ?, 'outro', strftime('%Y-%m-%d %H:%M:%f','now'))
       `).run(lead.id, admin.id, titulo, quando);
       const item = {
         lembrete_id: info.lastInsertRowid, lead_id: lead.id,

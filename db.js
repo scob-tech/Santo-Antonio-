@@ -108,7 +108,13 @@ if (!colunaExiste('leads', 'resumo_ia')) {
 // quando o lembrete foi criado — precisa pra filtrar "tarefas que a IA
 // criou HOJE" no relatório do dia (lembretes antigas não tinham essa coluna)
 if (!colunaExiste('lembretes', 'criado_em')) {
-  db.exec(`ALTER TABLE lembretes ADD COLUMN criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))`);
+  // SQLite não deixa usar função (strftime) como valor padrão direto no
+  // ADD COLUMN quando é NOT NULL numa tabela que já existe — só aceita
+  // valor constante nesse caso (diferente de CREATE TABLE, onde funciona).
+  // Por isso em 2 passos: adiciona a coluna sem default, depois preenche
+  // as linhas existentes manualmente.
+  db.exec(`ALTER TABLE lembretes ADD COLUMN criado_em TEXT`);
+  db.exec(`UPDATE lembretes SET criado_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE criado_em IS NULL`);
 }
 if (!colunaExiste('leads', 'resultado')) {
   db.exec(`ALTER TABLE leads ADD COLUMN resultado TEXT`); // 'convertido' | 'perdido'
