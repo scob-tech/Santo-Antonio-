@@ -563,7 +563,9 @@ function renderizarMidia(m) {
 }
 
 function renderizarConversa(lead) {
-  document.getElementById('conversa-titulo').textContent = lead.nome_cliente || lead.telefone;
+  const nome = lead.nome_cliente || lead.telefone;
+  document.getElementById('conversa-titulo').textContent = nome;
+  document.getElementById('conversa-avatar').textContent = iniciais(nome);
   document.getElementById('conversa-subtitulo').textContent = `${lead.telefone} · ${lead.status === 'novo' ? 'Novo' : lead.status === 'em_atendimento' ? 'Em atendimento' : 'Encerrado'}`;
 
   const msgsEl = document.getElementById('conversa-mensagens');
@@ -577,18 +579,23 @@ function renderizarConversa(lead) {
   const claimBox = document.getElementById('conversa-acao-claim');
   const respostaBox = document.getElementById('conversa-caixa-resposta');
   const reabrirBox = document.getElementById('conversa-acao-reabrir');
+  const headerAcoes = document.getElementById('conversa-header-acoes');
 
   const podeAgir = lead.dono || ehGestor(usuarioAtual);
   reabrirBox.style.display = (lead.status === 'encerrado' && podeAgir) ? 'block' : 'none';
 
   if (podeAgir) {
-    respostaBox.style.display = lead.status === 'encerrado' ? 'none' : 'flex';
+    const mostraResposta = lead.status !== 'encerrado';
+    respostaBox.style.display = mostraResposta ? 'flex' : 'none';
+    headerAcoes.style.display = mostraResposta ? 'flex' : 'none';
     claimBox.style.display = 'none';
   } else if (lead.status === 'novo') {
     respostaBox.style.display = 'none';
+    headerAcoes.style.display = 'none';
     claimBox.style.display = 'block';
   } else {
     respostaBox.style.display = 'none';
+    headerAcoes.style.display = 'none';
     claimBox.style.display = 'none';
   }
   document.getElementById('conversa-texto').value = '';
