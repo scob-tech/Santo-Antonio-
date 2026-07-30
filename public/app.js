@@ -140,6 +140,7 @@ function mudarSetor(slug) {
   carregarConversasAtivas();
   carregarLembretes();
   if (ehGestor(usuarioAtual)) carregarVendedores();
+  fecharMenuMobile();
 }
 
 // Troca qual "view" aparece na área principal (Início, Agenda, Clientes,
@@ -161,6 +162,7 @@ function mudarView(nome) {
   });
   document.getElementById('view-title').textContent = TITULOS_VIEW[nome] || '';
   if (nome === 'progresso') carregarProgresso();
+  fecharMenuMobile();
 }
 
 let progressoPeriodo = 'semana';
@@ -1472,6 +1474,18 @@ function configurarSidebarRetratil() {
   if (!sidebar) return;
   sidebar.addEventListener('mouseenter', () => sidebar.classList.add('is-expanded'));
   sidebar.addEventListener('mouseleave', () => sidebar.classList.remove('is-expanded'));
+}
+
+// Menu hambúrguer (mobile) — sidebar vira um menu deslizante por cima do
+// conteúdo, com um fundo escurecido atrás. Fecha sozinho ao escolher
+// qualquer item (view ou setor), sem precisar tocar no X ou no fundo.
+function abrirMenuMobile() {
+  document.getElementById('sidebar').classList.add('mobile-aberta');
+  document.getElementById('mobile-overlay').classList.add('aberto');
+}
+function fecharMenuMobile() {
+  document.getElementById('sidebar').classList.remove('mobile-aberta');
+  document.getElementById('mobile-overlay').classList.remove('aberto');
 }
 
 (async function iniciar() {

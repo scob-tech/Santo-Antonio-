@@ -423,15 +423,6 @@
       padding-bottom: 2px;
     }
     .header-actions .btn-secundario { flex-shrink: 0; white-space: nowrap; }
-    .seletor-setor, .sidebar-switcher {
-      flex-direction: row !important;
-      width: auto;
-      flex-shrink: 0;
-      margin-bottom: 0;
-      margin-right: 6px;
-    }
-    .setor-tab, .switch-item { flex-shrink: 0; white-space: nowrap; }
-    .switch-item span:last-child { opacity: 1; display: none; }
     .user-box { flex-wrap: wrap; gap: 6px; row-gap: 4px; }
     .user-box .btn-secundario { padding: 5px 9px; font-size: 11px; }
 
@@ -614,19 +605,43 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 /* No mobile a sidebar vira uma barra fina fixa no topo — o menu lateral
    retrátil não faz sentido em tela estreita */
 @media (max-width: 768px) {
-  .sidebar {
-    position: static; width: 100%; height: auto; flex-direction: row;
-    align-items: center; padding: 8px 12px; overflow-x: auto;
+  .hamburger-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: 8px; border: none; background: var(--bg);
+    color: var(--navy); cursor: pointer; flex-shrink: 0; margin-right: 4px;
   }
-  .sidebar.is-expanded { width: 100%; box-shadow: none; }
-  .sidebar-brand { padding: 0 10px 0 0; flex-shrink: 0; }
-  .brand-full { display: none !important; }
-  .sidebar-nav { flex-direction: row; flex: none; margin-top: 0; }
-  .side-item { flex-shrink: 0; }
-  .side-item span { opacity: 1; display: none; }
-  .side-divider { display: none; }
+  .sidebar-close-btn {
+    display: flex; align-items: center; justify-content: center; margin-left: auto;
+    width: 30px; height: 30px; border-radius: 50%; border: none; background: var(--bg);
+    color: var(--muted); cursor: pointer; font-size: 13px; flex-shrink: 0;
+  }
+  .sidebar {
+    position: fixed; left: 0; top: 0; height: 100vh; width: 240px;
+    flex-direction: column; align-items: stretch; padding: 20px 12px;
+    transform: translateX(-100%); transition: transform .2s ease;
+    overflow-y: auto; overflow-x: hidden; z-index: 90; box-shadow: none;
+  }
+  .sidebar.mobile-aberta { transform: translateX(0); box-shadow: 10px 0 30px rgba(18,23,43,.3); }
+  .sidebar-brand { padding: 4px 4px 20px; }
+  .brand-icon { display: none; }
+  .brand-full { display: block !important; opacity: 1; height: 26px; }
+  .sidebar-nav { flex-direction: column; flex: 1; margin-top: 4px; }
+  .side-item span { opacity: 1; }
+  .side-divider { display: block; }
+  .seletor-setor, .sidebar-switcher { flex-direction: column; }
+  .switch-item span:last-child { opacity: 1; }
   .main-col { margin-left: 0; }
   .topbar-slim { padding: 10px 14px; }
+
+  .mobile-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(18,23,43,.5); z-index: 85;
+  }
+  .mobile-overlay.aberto { display: block; }
+}
+@media (min-width: 769px) {
+  .hamburger-btn { display: none; }
+  .sidebar-close-btn { display: none; }
+  .mobile-overlay { display: none !important; }
 }
 /* =================================================================
    PAINEL NOVO — hero + cards de Novos Leads / Conversas em Andamento,
@@ -789,6 +804,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
       <div class="sidebar-brand">
         <img src="/img/logo-icon.png" alt="Depósito Santo Antônio" class="brand-icon" />
         <img src="/img/logo-full.png" alt="Depósito Santo Antônio" class="brand-full" />
+        <button class="sidebar-close-btn" onclick="fecharMenuMobile()" aria-label="Fechar menu">✕</button>
       </div>
 
       <div class="seletor-setor" id="seletor-setor" style="display:none;"></div>
@@ -824,8 +840,13 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
       </button>
     </aside>
 
+    <div class="mobile-overlay" id="mobile-overlay" onclick="fecharMenuMobile()"></div>
+
     <div class="main-col">
       <header class="topbar-slim">
+        <button class="hamburger-btn" id="hamburger-btn" onclick="abrirMenuMobile()" aria-label="Abrir menu">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
         <h2 class="view-title" id="view-title">Início</h2>
         <div class="user-box" id="user-box"></div>
       </header>
