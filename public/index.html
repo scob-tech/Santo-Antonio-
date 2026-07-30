@@ -73,6 +73,28 @@
 
   .logo-mark { flex-shrink: 0; }
 
+  .seletor-setor {
+    display: flex;
+    gap: 4px;
+    background: var(--bg);
+    padding: 4px;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  .setor-tab {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .setor-tab:hover { color: var(--navy); }
+  .setor-tab.is-active { background: var(--navy); color: white; }
+
   .brand-text { flex: 1; }
 
   .brand-text .sub {
@@ -395,6 +417,13 @@
       padding-bottom: 2px;
     }
     .header-actions .btn-secundario { flex-shrink: 0; white-space: nowrap; }
+    .seletor-setor {
+      order: 2;
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .setor-tab { flex-shrink: 0; white-space: nowrap; }
     .user-box { flex-wrap: wrap; gap: 6px; row-gap: 4px; }
     .user-box .btn-secundario { padding: 5px 9px; font-size: 11px; }
 
@@ -433,6 +462,7 @@
     <div class="brand-text">
       <div class="sub">Central de Atendimento · Fila de Leads WhatsApp</div>
     </div>
+    <div class="seletor-setor" id="seletor-setor" style="display:none;"></div>
     <div class="header-actions">
       <button class="btn-secundario" id="btn-relatorio" onclick="abrirRelatorio()" style="display:none;">📊 Relatório do dia</button>
       <button class="btn-secundario" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Rodar análise diária</button>

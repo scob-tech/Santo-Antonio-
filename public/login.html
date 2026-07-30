@@ -57,7 +57,7 @@
     margin: 0 0 22px 0;
   }
   label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
-  input {
+  input, select {
     width: 100%;
     padding: 9px 10px;
     border-radius: 6px;
@@ -65,6 +65,7 @@
     font-family: 'Inter', sans-serif;
     font-size: 14px;
     margin-bottom: 16px;
+    background: white;
   }
   button {
     width: 100%;
@@ -95,6 +96,14 @@
       <input type="text" id="login" autocomplete="username" required />
       <label for="senha">Senha</label>
       <input type="password" id="senha" autocomplete="current-password" required />
+      <label for="setor">Setor</label>
+      <select id="setor" required>
+        <option value="" disabled selected>Selecione o setor</option>
+        <option value="vendas">Vendas</option>
+        <option value="financeiro">Financeiro</option>
+        <option value="expedicao">Expedição</option>
+        <option value="administrador">Administrador</option>
+      </select>
       <button type="submit">Entrar</button>
     </form>
   </div>
@@ -104,13 +113,14 @@
     e.preventDefault();
     const login = document.getElementById('login').value.trim();
     const senha = document.getElementById('senha').value;
+    const setor = document.getElementById('setor').value;
     const erroEl = document.getElementById('erro');
     erroEl.style.display = 'none';
 
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ login, senha }),
+      body: JSON.stringify({ login, senha, setor }),
     });
 
     if (res.ok) {

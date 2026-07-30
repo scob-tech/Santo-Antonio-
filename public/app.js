@@ -33,6 +33,11 @@ let usuarioAtual = null;
 let leadsCache = [];
 let conversasAtivasCache = [];
 let vendedoresCache = [];
+// Setor que está sendo exibido no momento (Vendas, Financeiro, Expedição).
+// A maioria das contas só tem 1 setor mesmo — isso só vira um seletor de
+// verdade na tela pra quem acessa mais de um (hoje, só admin).
+let setorAtivo = null;
+let setoresDisponiveis = [];
 // Provisório: enquanto não existe uma tela própria pra histórico de encerradas,
 // a lista de conversas mostra só 2 encerradas por padrão pra não poluir o
 // dashboard, com botão "Ver mais" pra expandir sob demanda.
@@ -61,8 +66,48 @@ async function checarSessao() {
     return false;
   }
   usuarioAtual = await res.json();
+
+  const resSetores = await fetch(`${API}/api/setores`);
+  setoresDisponiveis = resSetores.ok ? await resSetores.json() : [];
+
+  // Lembra a última escolha (só importa pra quem tem mais de 1 setor).
+  // Se o setor salvo não existir mais entre os disponíveis, ignora e usa
+  // o primeiro — evita ficar preso a uma escolha que não faz mais sentido.
+  const salvo = localStorage.getItem('setorAtivo');
+  const salvoValido = setoresDisponiveis.some((s) => s.slug === salvo);
+  setorAtivo = salvoValido ? salvo : (setoresDisponiveis[0] ? setoresDisponiveis[0].slug : null);
+
   renderizarUserBox();
+  renderizarSeletorSetor();
   return true;
+}
+
+// Só desenha alguma coisa na tela quando a conta acessa mais de 1 setor —
+// quem só tem Vendas (a imensa maioria hoje) não vê nenhuma mudança visual.
+function renderizarSeletorSetor() {
+  const el = document.getElementById('seletor-setor');
+  if (!el) return;
+  if (setoresDisponiveis.length <= 1) {
+    el.innerHTML = '';
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'flex';
+  el.innerHTML = setoresDisponiveis.map((s) => `
+    <button class="setor-tab ${s.slug === setorAtivo ? 'is-active' : ''}" onclick="mudarSetor('${s.slug}')">${escapeHtml(s.nome)}</button>
+  `).join('');
+}
+
+function mudarSetor(slug) {
+  if (slug === setorAtivo) return;
+  setorAtivo = slug;
+  localStorage.setItem('setorAtivo', slug);
+  renderizarSeletorSetor();
+  mostrarTodasEncerradas = false; // volta ao padrão ao trocar de setor
+  carregarLeads();
+  carregarConversasAtivas();
+  carregarLembretes();
+  if (ehGestor(usuarioAtual)) carregarVendedores();
 }
 
 function renderizarUserBox() {
@@ -241,7 +286,8 @@ async function carregarVendedores() {
 }
 
 async function carregarLeads() {
-  let url = `${API}/api/leads?status=novo`;
+  if (!setorAtivo) return;
+  let url = `${API}/api/leads?status=novo&setor=${setorAtivo}`;
   const filtroData = document.getElementById('filtro-data-fila');
   if (filtroData && filtroData.value) {
     url += `&data=${filtroData.value}`;
@@ -682,7 +728,7 @@ async function confirmarNovoLeadManual() {
   const res = await fetch(`${API}/api/leads/manual`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ telefone, nome_cliente, observacao }),
+    body: JSON.stringify({ telefone, nome_cliente, observacao, setor: setorAtivo }),
   });
 
   if (!res.ok) {
@@ -814,13 +860,14 @@ function formatarHoraConversa(dataStr) {
 }
 
 async function carregarConversasAtivas(termoBusca) {
+  if (!setorAtivo) return;
   let leads;
   if (termoBusca && termoBusca.length >= 2) {
-    const res = await fetch(`${API}/api/leads/buscar?q=${encodeURIComponent(termoBusca)}`);
+    const res = await fetch(`${API}/api/leads/buscar?q=${encodeURIComponent(termoBusca)}&setor=${setorAtivo}`);
     if (res.status === 401) return window.location.href = '/login.html';
     leads = await res.json();
   } else {
-    const res = await fetch(`${API}/api/leads?status=em_atendimento,encerrado`);
+    const res = await fetch(`${API}/api/leads?status=em_atendimento,encerrado&setor=${setorAtivo}`);
     if (res.status === 401) return window.location.href = '/login.html';
     const todos = await res.json();
     leads = todos.filter(l => !l.restrito);
