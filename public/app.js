@@ -110,6 +110,26 @@ function mudarSetor(slug) {
   if (ehGestor(usuarioAtual)) carregarVendedores();
 }
 
+// Troca qual "view" aparece na área principal (Início, Agenda, Clientes,
+// Histórico, Progresso, Configurações) — só troca o que está visível,
+// não recarrega dado nenhum. Hoje só "Início" tem conteúdo de verdade;
+// as outras são placeholders até ganharem tela própria.
+const TITULOS_VIEW = {
+  inicio: 'Início',
+  agenda: 'Agenda',
+  clientes: 'Clientes',
+  historico: 'Histórico',
+  progresso: 'Progresso',
+  configuracoes: 'Configurações',
+};
+function mudarView(nome) {
+  document.querySelectorAll('.view').forEach((el) => { el.hidden = el.id !== `view-${nome}`; });
+  document.querySelectorAll('.side-item').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.view === nome);
+  });
+  document.getElementById('view-title').textContent = TITULOS_VIEW[nome] || '';
+}
+
 function renderizarUserBox() {
   const el = document.getElementById('user-box');
   const rotulos = { admin: 'Administrador', supervisor: 'Supervisor', vendedor: 'Vendedor' };
@@ -1254,7 +1274,15 @@ function abrirLeadDaUrlSeTiver() {
   }
 }
 
+function configurarSidebarRetratil() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  sidebar.addEventListener('mouseenter', () => sidebar.classList.add('is-expanded'));
+  sidebar.addEventListener('mouseleave', () => sidebar.classList.remove('is-expanded'));
+}
+
 (async function iniciar() {
+  configurarSidebarRetratil();
   const logado = await checarSessao();
   if (!logado) return;
   registrarServiceWorker();

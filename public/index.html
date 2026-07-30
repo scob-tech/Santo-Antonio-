@@ -75,11 +75,12 @@
 
   .seletor-setor {
     display: flex;
-    gap: 4px;
+    flex-direction: column;
+    gap: 3px;
     background: var(--bg);
     padding: 4px;
     border-radius: 8px;
-    flex-shrink: 0;
+    margin-bottom: 10px;
   }
   .setor-tab {
     background: transparent;
@@ -88,9 +89,13 @@
     font-family: 'Inter', sans-serif;
     font-size: 12px;
     font-weight: 600;
-    padding: 6px 12px;
+    padding: 7px 8px;
     border-radius: 6px;
     cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .setor-tab:hover { color: var(--navy); }
   .setor-tab.is-active { background: var(--navy); color: white; }
@@ -418,16 +423,18 @@
     }
     .header-actions .btn-secundario { flex-shrink: 0; white-space: nowrap; }
     .seletor-setor {
-      order: 2;
-      width: 100%;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
+      flex-direction: row;
+      width: auto;
+      flex-shrink: 0;
+      margin-bottom: 0;
+      margin-right: 6px;
     }
     .setor-tab { flex-shrink: 0; white-space: nowrap; }
     .user-box { flex-wrap: wrap; gap: 6px; row-gap: 4px; }
     .user-box .btn-secundario { padding: 5px 9px; font-size: 11px; }
 
     main { padding: 14px; }
+    .page { padding: 14px; }
 
     .grid {
       grid-template-columns: 1fr;
@@ -452,76 +459,212 @@
 
     .cadastro-form { padding: 12px; }
   }
+/* =================================================================
+   CASCA VISUAL NOVA — sidebar retrátil + topo slim, no mesmo padrão
+   do protótipo aprovado. As cores usam a marca já estabelecida no
+   resto do sistema (navy/vermelho) em vez do azul genérico do
+   protótipo, pra não destoar dos componentes que ainda não mudaram
+   (fila, conversas, modais) e continuam com a paleta de sempre.
+   ================================================================= */
+.app-shell { display: flex; min-height: 100vh; }
+
+.sidebar {
+  position: fixed; left: 0; top: 0; height: 100vh; width: 76px;
+  background: white;
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  padding: 20px 10px;
+  overflow: hidden;
+  z-index: 60;
+  transition: width .18s ease, box-shadow .18s ease;
+}
+.sidebar.is-expanded {
+  width: 236px;
+  box-shadow: 10px 0 30px rgba(31,36,48,.14);
+}
+.sidebar-brand { display: flex; align-items: center; padding: 4px 4px 20px; height: 40px; }
+.brand-icon { height: 34px; width: auto; flex-shrink: 0; }
+.brand-full { height: 30px; width: auto; margin-left: 6px; opacity: 0; display: none; transition: opacity .12s ease; }
+.sidebar.is-expanded .brand-icon { display: none; }
+.sidebar.is-expanded .brand-full { display: block; opacity: 1; }
+
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; margin-top: 4px; }
+.side-item {
+  display: flex; align-items: center; gap: 12px;
+  border: none; background: none; text-align: left; cursor: pointer;
+  padding: 10px; border-radius: 10px; color: var(--muted);
+  font-weight: 600; font-size: 14px; font-family: 'Inter', sans-serif;
+  white-space: nowrap;
+}
+.side-item span { opacity: 0; transition: opacity .12s ease; }
+.sidebar.is-expanded .side-item span { opacity: 1; }
+.side-item svg { flex-shrink: 0; }
+.side-item:hover { background: var(--navy-bg); }
+.side-item.is-active { background: var(--navy-bg); color: var(--navy); }
+.side-divider { height: 1px; background: var(--border); margin: 10px 4px; }
+
+.main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; margin-left: 76px; }
+
+.topbar-slim {
+  display: flex; align-items: center; justify-content: space-between;
+  background: white; border-bottom: 4px solid var(--red);
+  padding: 14px 24px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.view-title { margin: 0; font-family: 'Oswald', sans-serif; font-size: 17px; text-transform: uppercase; color: var(--navy); flex-shrink: 0; }
+
+.page { padding: 22px 24px 60px; max-width: 1400px; }
+.view { display: none; }
+.view:not([hidden]) { display: block; }
+.placeholder-view {
+  background: white; border: 1px dashed var(--border); border-radius: 10px;
+  padding: 60px 24px; text-align: center; color: var(--muted); font-size: 14px;
+}
+.placeholder-view strong { display: block; color: var(--navy); font-family: 'Oswald', sans-serif; font-size: 16px; text-transform: uppercase; margin-bottom: 8px; }
+
+/* No mobile a sidebar vira uma barra fina fixa no topo — o menu lateral
+   retrátil não faz sentido em tela estreita */
+@media (max-width: 768px) {
+  .sidebar {
+    position: static; width: 100%; height: auto; flex-direction: row;
+    align-items: center; padding: 8px 12px; overflow-x: auto;
+  }
+  .sidebar.is-expanded { width: 100%; box-shadow: none; }
+  .sidebar-brand { padding: 0 10px 0 0; flex-shrink: 0; }
+  .brand-full { display: none !important; }
+  .sidebar-nav { flex-direction: row; flex: none; margin-top: 0; }
+  .side-item { flex-shrink: 0; }
+  .side-item span { opacity: 1; display: none; }
+  .side-divider { display: none; }
+  .main-col { margin-left: 0; }
+  .topbar-slim { padding: 10px 14px; }
+}
 </style>
 </head>
 <body>
-  <header>
-    <div class="logo-mark">
-      <img src="/img/logo.png" alt="Depósito Santo Antônio" height="52" />
-    </div>
-    <div class="brand-text">
-      <div class="sub">Central de Atendimento · Fila de Leads WhatsApp</div>
-    </div>
-    <div class="seletor-setor" id="seletor-setor" style="display:none;"></div>
-    <div class="header-actions">
-      <button class="btn-secundario" id="btn-relatorio" onclick="abrirRelatorio()" style="display:none;">📊 Relatório do dia</button>
-      <button class="btn-secundario" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Rodar análise diária</button>
-      <button class="btn-secundario" id="btn-limpar-demo" onclick="limparDadosDemo()" style="display:none;">🗑️ Limpar demo</button>
-    </div>
-    <div class="user-box" id="user-box"></div>
-  </header>
-
-  <main>
-    <div class="grid">
-      <div>
-        <div class="panel-title">
-          <span>Fila de atendimento</span>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <input type="date" id="filtro-data-fila" title="Filtrar fila por um dia específico (opcional — por padrão mostra tudo que ainda não foi puxado)" style="font-size:12px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" onchange="carregarLeads()" />
-            <button class="link-mini" onclick="abrirNovoLeadManual()">+ Novo Lead</button>
-          </div>
-        </div>
-        <div id="leads"></div>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <img src="/img/logo-icon.png" alt="Depósito Santo Antônio" class="brand-icon" />
+        <img src="/img/logo-full.png" alt="Depósito Santo Antônio" class="brand-full" />
       </div>
-      <div>
-        <div id="painel-vendedores" style="display:none;">
-          <div class="panel-title">
-            <span>Vendedores</span>
-            <button class="link-mini" id="btn-toggle-cadastro" style="display:none;">+ Cadastrar</button>
+
+      <div class="seletor-setor" id="seletor-setor" style="display:none;"></div>
+
+      <nav class="sidebar-nav" id="sidebar-nav">
+        <button class="side-item is-active" data-view="inicio" onclick="mudarView('inicio')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 11.5 12 4l8 7.5M6 10v9h5v-5h2v5h5v-9" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+          <span>Início</span>
+        </button>
+        <button class="side-item" data-view="agenda" onclick="mudarView('agenda')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Agenda</span>
+        </button>
+        <button class="side-item" data-view="clientes" onclick="mudarView('clientes')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6M15.5 8.2a3 3 0 1 1 3.8 2.9M20 20c0-2.7-1.7-4.8-4-5.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Clientes</span>
+        </button>
+        <button class="side-item" data-view="historico" onclick="mudarView('historico')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Histórico</span>
+        </button>
+        <button class="side-item" data-view="progresso" onclick="mudarView('progresso')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 20V10M11 20V4M18 20v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Progresso</span>
+        </button>
+      </nav>
+
+      <div class="side-divider"></div>
+      <button class="side-item" data-view="configuracoes" onclick="mudarView('configuracoes')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.97 7.97 0 000-2l2-1.5-2-3.4-2.3.9a8 8 0 00-1.7-1L15 3h-4l-.4 2.9a8 8 0 00-1.7 1l-2.3-.9-2 3.4L6.6 11a7.97 7.97 0 000 2l-2 1.5 2 3.4 2.3-.9a8 8 0 001.7 1L11 21h4l.4-2.9a8 8 0 001.7-1l2.3.9 2-3.4-2-1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        <span>Configurações</span>
+      </button>
+    </aside>
+
+    <div class="main-col">
+      <header class="topbar-slim">
+        <h2 class="view-title" id="view-title">Início</h2>
+        <div class="header-actions">
+          <button class="btn-secundario" id="btn-relatorio" onclick="abrirRelatorio()" style="display:none;">📊 Relatório do dia</button>
+          <button class="btn-secundario" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Rodar análise diária</button>
+          <button class="btn-secundario" id="btn-limpar-demo" onclick="limparDadosDemo()" style="display:none;">🗑️ Limpar demo</button>
+        </div>
+        <div class="user-box" id="user-box"></div>
+      </header>
+
+      <main class="page">
+        <div class="view" id="view-inicio">
+          <div class="grid">
+            <div>
+              <div class="panel-title">
+                <span>Fila de atendimento</span>
+                <div style="display:flex; gap:10px; align-items:center;">
+                  <input type="date" id="filtro-data-fila" title="Filtrar fila por um dia específico (opcional — por padrão mostra tudo que ainda não foi puxado)" style="font-size:12px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" onchange="carregarLeads()" />
+                  <button class="link-mini" onclick="abrirNovoLeadManual()">+ Novo Lead</button>
+                </div>
+              </div>
+              <div id="leads"></div>
+            </div>
+            <div>
+              <div id="painel-vendedores" style="display:none;">
+                <div class="panel-title">
+                  <span>Vendedores</span>
+                  <button class="link-mini" id="btn-toggle-cadastro" style="display:none;">+ Cadastrar</button>
+                </div>
+                <div class="cadastro-form" id="cadastro-form">
+                  <label for="c-nome">Nome</label>
+                  <input type="text" id="c-nome" />
+                  <label for="c-login">Login</label>
+                  <input type="text" id="c-login" />
+                  <label for="c-senha">Senha</label>
+                  <input type="password" id="c-senha" />
+                  <label for="c-role">Nível de acesso</label>
+                  <select id="c-role">
+                    <option value="vendedor">Vendedor</option>
+                    <option value="supervisor">Supervisor (vê e responde tudo, sem senha/relatório)</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                  <button style="margin-top:12px; width:100%;" onclick="cadastrarVendedor()">Salvar</button>
+                  <div class="msg" id="cadastro-msg"></div>
+                </div>
+                <div id="vendedores"></div>
+              </div>
+
+              <div class="panel-title" style="margin-top:20px;">
+                <span>Conversas Ativas</span>
+              </div>
+              <input type="text" id="busca-conversas" placeholder="🔍 Buscar por nome ou telefone..." style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; margin-bottom:10px; box-sizing:border-box;" oninput="filtrarConversas(this.value)" />
+              <div id="conversas-ativas"></div>
+
+              <div class="panel-title" style="margin-top:20px;">
+                <span>Minha Agenda</span>
+                <button class="link-mini" onclick="abrirNovaTarefa()">+ Tarefa</button>
+              </div>
+              <div id="lembretes"></div>
+            </div>
           </div>
-          <div class="cadastro-form" id="cadastro-form">
-            <label for="c-nome">Nome</label>
-            <input type="text" id="c-nome" />
-            <label for="c-login">Login</label>
-            <input type="text" id="c-login" />
-            <label for="c-senha">Senha</label>
-            <input type="password" id="c-senha" />
-            <label for="c-role">Nível de acesso</label>
-            <select id="c-role">
-              <option value="vendedor">Vendedor</option>
-              <option value="supervisor">Supervisor (vê e responde tudo, sem senha/relatório)</option>
-              <option value="admin">Administrador</option>
-            </select>
-            <button style="margin-top:12px; width:100%;" onclick="cadastrarVendedor()">Salvar</button>
-            <div class="msg" id="cadastro-msg"></div>
-          </div>
-          <div id="vendedores"></div>
         </div>
 
-        <div class="panel-title" style="margin-top:20px;">
-          <span>Conversas Ativas</span>
+        <div class="view" id="view-agenda" hidden>
+          <div class="placeholder-view"><strong>Agenda</strong>Tela dedicada em construção — por enquanto, use "Minha Agenda" na aba Início.</div>
         </div>
-        <input type="text" id="busca-conversas" placeholder="🔍 Buscar por nome ou telefone..." style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; margin-bottom:10px; box-sizing:border-box;" oninput="filtrarConversas(this.value)" />
-        <div id="conversas-ativas"></div>
-
-        <div class="panel-title" style="margin-top:20px;">
-          <span>Minha Agenda</span>
-          <button class="link-mini" onclick="abrirNovaTarefa()">+ Tarefa</button>
+        <div class="view" id="view-clientes" hidden>
+          <div class="placeholder-view"><strong>Clientes</strong>Cadastro de clientes ainda não existe nesse sistema — em construção.</div>
         </div>
-        <div id="lembretes"></div>
-      </div>
+        <div class="view" id="view-historico" hidden>
+          <div class="placeholder-view"><strong>Histórico</strong>Tela dedicada em construção — por enquanto, as conversas encerradas aparecem em "Conversas Ativas", na aba Início.</div>
+        </div>
+        <div class="view" id="view-progresso" hidden>
+          <div class="placeholder-view"><strong>Progresso</strong>Comparativo de desempenho ao longo do tempo — em construção.</div>
+        </div>
+        <div class="view" id="view-configuracoes" hidden>
+          <div class="placeholder-view"><strong>Configurações</strong>Em construção.</div>
+        </div>
+      </main>
     </div>
-  </main>
+  </div>
+
 
   <!-- Modal: novo lead manual -->
   <div class="modal-overlay" id="modal-novo-lead">
