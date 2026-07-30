@@ -79,11 +79,13 @@ async function checarSessao() {
 
   renderizarUserBox();
   renderizarSeletorSetor();
+  atualizarPainelTitulo();
   return true;
 }
 
 // Só desenha alguma coisa na tela quando a conta acessa mais de 1 setor —
 // quem só tem Vendas (a imensa maioria hoje) não vê nenhuma mudança visual.
+const EMOJI_SETOR = { vendas: '🛒', financeiro: '💰', expedicao: '🚚' };
 function renderizarSeletorSetor() {
   const el = document.getElementById('seletor-setor');
   if (!el) return;
@@ -93,9 +95,20 @@ function renderizarSeletorSetor() {
     return;
   }
   el.style.display = 'flex';
+  el.className = 'seletor-setor sidebar-switcher';
   el.innerHTML = setoresDisponiveis.map((s) => `
-    <button class="setor-tab ${s.slug === setorAtivo ? 'is-active' : ''}" onclick="mudarSetor('${s.slug}')">${escapeHtml(s.nome)}</button>
+    <button class="switch-item ${s.slug === setorAtivo ? 'is-active' : ''}" onclick="mudarSetor('${s.slug}')" title="${escapeHtml(s.nome)}">
+      <span class="switch-emoji">${EMOJI_SETOR[s.slug] || '🏷️'}</span><span>${escapeHtml(s.nome)}</span>
+    </button>
   `).join('');
+}
+
+const NOMES_SETOR = { vendas: 'Vendas', financeiro: 'Financeiro', expedicao: 'Expedição' };
+function atualizarPainelTitulo() {
+  const el = document.getElementById('painel-titulo');
+  if (!el) return;
+  const nome = NOMES_SETOR[setorAtivo];
+  el.textContent = nome ? `Painel de ${nome}` : 'Painel';
 }
 
 function mudarSetor(slug) {
@@ -103,6 +116,7 @@ function mudarSetor(slug) {
   setorAtivo = slug;
   localStorage.setItem('setorAtivo', slug);
   renderizarSeletorSetor();
+  atualizarPainelTitulo();
   mostrarTodasEncerradas = false; // volta ao padrão ao trocar de setor
   carregarLeads();
   carregarConversasAtivas();
@@ -132,19 +146,37 @@ function mudarView(nome) {
 
 function renderizarUserBox() {
   const el = document.getElementById('user-box');
-  const rotulos = { admin: 'Administrador', supervisor: 'Supervisor', vendedor: 'Vendedor' };
+  const rotulos = { admin: 'Admin', supervisor: 'Supervisor', vendedor: 'Vendedor' };
+  const iniciaisUsuario = iniciais(usuarioAtual.nome);
+
+  const itemMinhaSenha = usuarioAtual.role === 'admin'
+    ? `<button class="user-dropdown-item" onclick="abrirModalSenha(${usuarioAtual.id}, 'você')">🔑 Minha senha</button>` : '';
+  const itemLimparDemo = usuarioAtual.login === LOGIN_DESENVOLVEDOR
+    ? `<button class="user-dropdown-item" id="btn-limpar-demo" onclick="limparDadosDemo()">🗑️ Limpar demo</button>` : '';
+
   el.innerHTML = `
-    <span class="user-nome">${usuarioAtual.nome}</span>
-    <span class="user-role">${rotulos[usuarioAtual.role] || 'Vendedor'}</span>
-    <button class="btn-secundario" id="btn-notificacoes" onclick="alternarNotificacoes()">🔔 Notificações</button>
-    ${usuarioAtual.role === 'admin' ? `<button class="btn-secundario" onclick="abrirModalSenha(${usuarioAtual.id}, 'você')">🔑 Minha senha</button>` : ''}
-    <button class="btn-secundario" onclick="sair()">Sair</button>
+    <div class="user-chip" onclick="toggleUserDropdown(event)">
+      <div class="avatar">${escapeHtml(iniciaisUsuario)}</div>
+      <div class="user-text">
+        <span class="user-name">${escapeHtml(usuarioAtual.nome)}</span>
+        <span class="user-role">${rotulos[usuarioAtual.role] || 'Vendedor'}</span>
+      </div>
+      <span class="chevron">▾</span>
+      <div class="user-dropdown" id="user-dropdown" hidden>
+        <button class="user-dropdown-item" id="btn-notificacoes" onclick="event.stopPropagation(); alternarNotificacoes()">🔔 Ativar notificações</button>
+        ${itemMinhaSenha}
+        ${itemLimparDemo}
+        <div class="user-dropdown-divider"></div>
+        <button class="user-dropdown-item user-dropdown-item--danger" onclick="sair()">Sair</button>
+      </div>
+    </div>
   `;
   atualizarBotaoNotificacoes();
 
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
   if (usuarioAtual.role === 'admin') {
     document.getElementById('painel-vendedores').style.display = 'block';
+    document.getElementById('config-sem-acesso').style.display = 'none';
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
@@ -153,16 +185,22 @@ function renderizarUserBox() {
   if (ehGestor(usuarioAtual)) {
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
   }
-  // "Limpar demo" fica exclusivo da conta de desenvolvedor (login "admin"),
-  // não de qualquer administrador — quando o cliente ganhar a própria conta
-  // admin (ex: pra Juliana), esse botão não aparece pra ela.
-  if (usuarioAtual.login === LOGIN_DESENVOLVEDOR) {
-    document.getElementById('btn-limpar-demo').style.display = 'inline-block';
-  }
   if (usuarioAtual.role !== 'supervisor') {
     document.getElementById('btn-relatorio').style.display = 'inline-block';
   }
 }
+
+// Abre/fecha o menu do usuário (chip no topo). Fecha sozinho se a pessoa
+// clicar em qualquer outro lugar da tela.
+function toggleUserDropdown(evento) {
+  evento.stopPropagation();
+  const dropdown = document.getElementById('user-dropdown');
+  dropdown.hidden = !dropdown.hidden;
+}
+document.addEventListener('click', () => {
+  const dropdown = document.getElementById('user-dropdown');
+  if (dropdown) dropdown.hidden = true;
+});
 
 async function limparDadosDemo() {
   if (!confirm('Isso apaga todos os leads e vendedores criados pela simulação de demonstração (bruno_demo, pedro_demo, e os leads deles). Dados reais não são afetados. Confirma?')) return;
@@ -317,96 +355,45 @@ async function carregarLeads() {
   const leads = await res.json();
   leadsCache = leads;
   const el = document.getElementById('leads');
+  const contagemEl = document.getElementById('leads-count');
+  if (contagemEl) contagemEl.textContent = leads.length;
 
   if (leads.length === 0) {
-    el.innerHTML = `<div class="empty-state">Nenhum lead novo esperando. Assim que uma mensagem chegar no WhatsApp, aparece aqui.</div>`;
+    el.innerHTML = `<li class="empty-state">Nenhum lead novo esperando. Assim que uma mensagem chegar no WhatsApp, aparece aqui.</li>`;
     return;
   }
 
-  // Ordenados por quem chegou primeiro — a ordem de chegada vira o número da senha (ticket)
+  // Ordenados por quem chegou primeiro
   const ordenados = [...leads].sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
-  const numeroSenha = new Map(ordenados.map((l, i) => [l.id, i + 1]));
 
   el.innerHTML = ordenados.map(l => {
-    // Lead restrito: outro vendedor já pegou, só mostramos o mínimo
-    if (l.restrito) {
-      return `
-        <div class="ticket-card restrito">
-          <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
-          <div class="ticket-body">
-            <div class="lead-header">
-              <strong>${escapeHtml(l.nome_cliente) || 'Cliente'}</strong>
-              <span class="badge badge-restrito">Em atendimento</span>
-            </div>
-            <div class="texto">${l.interesse ? `Interesse: ${escapeHtml(l.interesse)}` : 'Sem produto identificado'}</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:4px;">Já está sendo atendido por outro vendedor</div>
-          </div>
-        </div>
-      `;
-    }
+    const nome = l.nome_cliente || l.telefone;
 
-    const badge = l.status === 'novo'
-      ? `<span class="badge badge-novo">Novo</span>`
-      : l.status === 'em_atendimento'
-        ? `<span class="badge badge-atendimento">Em atendimento${l.dono ? ' (você)' : ''}</span>`
-        : `<span class="badge badge-encerrado">Encerrado</span>`;
-
-    let acao = '';
-    if (l.status === 'novo') {
-      acao = `<button onclick="puxarLead(${l.id})">Pegar lead</button>`;
-    } else if (l.status === 'em_atendimento' && l.dono) {
-      acao = `<button onclick="encerrarLead(${l.id})">Encerrar atendimento</button>`;
-    }
-
-    // Tempo de espera na FILA — destaca se passou de 5 min sem ser puxado (gargalo de fila).
-    // Formatado em min/h/dias porque agora a fila mostra lead de qualquer
-    // dia, não só hoje — "esperando há 2880 min" seria ilegível.
+    // Tempo de espera — destaca com ⚠️ se passou de 5 min sem ser puxado
+    // (gargalo de fila). Formatado em min/h/dias porque a fila mostra lead
+    // de qualquer dia, não só hoje.
     const minutosEsperando = Math.floor((Date.now() - new Date(l.criado_em + 'Z')) / 60000);
-    let tempoHtml = '';
-    if (l.status === 'novo') {
-      const alerta = minutosEsperando >= 5;
-      let tempoTexto;
-      if (minutosEsperando < 60) {
-        tempoTexto = `${minutosEsperando} min`;
-      } else if (minutosEsperando < 60 * 24) {
-        tempoTexto = `${Math.floor(minutosEsperando / 60)} h`;
-      } else {
-        const dias = Math.floor(minutosEsperando / (60 * 24));
-        tempoTexto = `${dias} dia${dias === 1 ? '' : 's'}`;
-      }
-      tempoHtml = `<div class="${alerta ? 'alerta' : ''}" style="${alerta ? '' : 'font-size:12px; color:var(--muted); margin-top:6px;'}">
-        ${alerta ? '⚠️ ' : ''}Esperando há ${tempoTexto}${alerta ? ' — gargalo de fila' : ''}
-      </div>`;
-    }
+    const alerta = minutosEsperando >= 5;
+    let tempoTexto;
+    if (minutosEsperando < 60) tempoTexto = `${minutosEsperando} min`;
+    else if (minutosEsperando < 60 * 24) tempoTexto = `${Math.floor(minutosEsperando / 60)} h`;
+    else { const dias = Math.floor(minutosEsperando / (60 * 24)); tempoTexto = `${dias} dia${dias === 1 ? '' : 's'}`; }
 
-    // Gargalo DURANTE o atendimento — cliente já foi pego por um vendedor,
-    // mas a última mensagem foi dele (cliente) e o vendedor ainda não respondeu
-    let gargaloAtendimentoHtml = '';
-    if (l.status === 'em_atendimento' && l.ultima_mensagem && l.ultima_mensagem.remetente === 'cliente') {
-      const minutosSemResposta = Math.floor((Date.now() - new Date(l.ultima_mensagem.criado_em + 'Z')) / 60000);
-      if (minutosSemResposta >= 5) {
-        gargaloAtendimentoHtml = `<div class="alerta">⚠️ Cliente esperando resposta há ${minutosSemResposta} min — gargalo de atendimento</div>`;
-      }
-    }
-
-    const origemHtml = `<span class="origem-tag">Origem: ${escapeHtml(l.origem)}</span>`;
-    const temGargalo = (l.status === 'novo' && minutosEsperando >= 5) || gargaloAtendimentoHtml !== '';
+    const tags = [l.interesse, l.origem && l.origem !== 'geral' ? l.origem : null].filter(Boolean);
+    const tagsHtml = tags.length ? `<div class="lead-tags">${tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : '';
 
     return `
-      <div class="ticket-card ${temGargalo ? 'gargalo' : ''} lead-clicavel" onclick="abrirConversa(${l.id})">
-        <div class="ticket-number">${String(numeroSenha.get(l.id)).padStart(3, '0')}</div>
-        <div class="ticket-body">
-          <div class="lead-header">
-            <strong>${escapeHtml(l.nome_cliente) || escapeHtml(l.telefone)}</strong>
-            ${badge}
+      <li class="lead-item" onclick="abrirConversa(${l.id})">
+        <div class="lead-avatar">${escapeHtml(iniciais(nome))}</div>
+        <div class="lead-main">
+          <div class="lead-top">
+            <span class="lead-name">${escapeHtml(nome)}</span>
+            <span class="lead-time">${alerta ? '⚠️ ' : ''}há ${tempoTexto}</span>
           </div>
-          <div class="texto">${escapeHtml(l.primeira_mensagem)}</div>
-          ${origemHtml}
-          ${tempoHtml}
-          ${gargaloAtendimentoHtml}
-          <div class="acao" onclick="event.stopPropagation()">${acao}</div>
+          ${tagsHtml}
+          <p class="lead-preview">${escapeHtml(l.primeira_mensagem)}</p>
         </div>
-      </div>
+      </li>
     `;
   }).join('');
 }
@@ -895,17 +882,10 @@ async function carregarConversasAtivas(termoBusca) {
 
   conversasAtivasCache = leads.filter(l => l.status !== 'encerrado');
 
-  const el = document.getElementById('conversas-ativas');
-  if (leads.length === 0) {
-    el.innerHTML = `<div class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa ativa no momento.'}</div>`;
-    return;
-  }
-
-  // Prioridade visual: 1) não lida primeiro (o que precisa de atenção agora),
-  // 2) em atendimento sem pendência, por atividade mais recente,
-  // 3) encerrada sempre no fim da lista, não importa quando foi a última msg.
-  const ordenadas = [...leads].sort((a, b) => {
-    const grupo = (l) => (l.nao_lidas || 0) > 0 ? 0 : (l.status === 'encerrado' ? 2 : 1);
+  // Ordem: não lida primeiro (precisa de atenção agora), depois por
+  // atividade mais recente.
+  const ordenarPorAtividade = (lista) => [...lista].sort((a, b) => {
+    const grupo = (l) => (l.nao_lidas || 0) > 0 ? 0 : 1;
     const grupoA = grupo(a);
     const grupoB = grupo(b);
     if (grupoA !== grupoB) return grupoA - grupoB;
@@ -914,47 +894,52 @@ async function carregarConversasAtivas(termoBusca) {
     return tb - ta;
   });
 
-  // Provisório: só as 2 encerradas mais recentes aparecem por padrão, com
-  // botão "Ver mais" pra expandir todas (evita poluir o dashboard até existir
-  // uma tela própria de histórico).
-  const naoEncerradas = ordenadas.filter(l => l.status !== 'encerrado');
-  const encerradas = ordenadas.filter(l => l.status === 'encerrado');
-  const totalEncerradas = encerradas.length;
-  const encerradasVisiveis = (termoBusca || mostrarTodasEncerradas) ? encerradas : encerradas.slice(0, 2);
-  const listaParaRenderizar = [...naoEncerradas, ...encerradasVisiveis];
-
   const renderizarItem = (l) => {
     const nome = l.nome_cliente || l.telefone;
     const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
-    const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="conversa-vendedor-tag">${escapeHtml(l.vendedor_nome)}</span>` : '';
+    const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="setor-tag">${escapeHtml(l.vendedor_nome)}</span>` : '';
     const naoLidas = l.nao_lidas || 0;
-    const badge = naoLidas > 0 ? `<span class="conversa-badge">${naoLidas > 9 ? '9+' : naoLidas}</span>` : '';
-    const encerradaTag = l.status === 'encerrado' ? `<span class="conversa-vendedor-tag" style="color:var(--muted);">Encerrado</span>` : '';
     const semResposta = precisaResposta(l);
     const hora = l.ultima_mensagem ? formatarHoraConversa(l.ultima_mensagem.criado_em) : '';
-    const horaEl = hora ? `<span class="conversa-hora">${hora}</span>` : '';
+    let ladoDireito = `<span class="conv-time">${hora}</span>`;
+    if (naoLidas > 0) ladoDireito += `<span class="conv-unread-badge">${naoLidas > 9 ? '9+' : naoLidas}</span>`;
+    else if (semResposta) ladoDireito += `<span class="conv-waiting-label">Aguardando resposta</span>`;
     return `
-      <div class="conversa-item ${naoLidas > 0 ? 'nao-lida' : ''} ${l.status === 'encerrado' ? 'encerrada' : ''} ${semResposta ? 'sem-resposta' : ''}" onclick="abrirConversa(${l.id})">
-        <div class="conversa-avatar">${escapeHtml(iniciais(nome))}</div>
-        <div class="conversa-info">
-          <div class="conversa-nome"><span>${escapeHtml(nome)}</span>${tagVendedor}${encerradaTag}</div>
-          <div class="conversa-preview">${escapeHtml(preview)}</div>
+      <li class="conv-item ${naoLidas > 0 ? 'conv-item--nao-lida' : ''} ${semResposta ? 'conv-item--aguardando' : ''}" onclick="abrirConversa(${l.id})">
+        <div class="conv-avatar" style="background:${corAvatar(l.id)};">${escapeHtml(iniciais(nome))}</div>
+        <div class="conv-main">
+          <div class="conv-name">${escapeHtml(nome)} ${tagVendedor}</div>
+          <p class="conv-preview">${escapeHtml(preview)}</p>
         </div>
-        ${horaEl}
-        ${badge}
-      </div>
+        <div class="conv-side">${ladoDireito}</div>
+      </li>
     `;
   };
 
-  let html = listaParaRenderizar.map(renderizarItem).join('');
+  // --- Card "Conversas em Andamento" (Início): só em_atendimento ---
+  const ativas = ordenarPorAtividade(leads.filter((l) => l.status !== 'encerrado'));
+  const elAtivas = document.getElementById('conversas-ativas');
+  const contagemEl = document.getElementById('conv-count');
+  if (contagemEl) contagemEl.textContent = ativas.length;
+  elAtivas.innerHTML = ativas.length > 0
+    ? ativas.map(renderizarItem).join('')
+    : `<li class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa ativa no momento.'}</li>`;
 
-  if (!termoBusca && totalEncerradas > 2) {
-    html += mostrarTodasEncerradas
-      ? `<button class="link-mini" style="width:100%; text-align:center; margin-top:4px;" onclick="mostrarTodasEncerradas = false; carregarConversasAtivas();">Ver menos</button>`
-      : `<button class="link-mini" style="width:100%; text-align:center; margin-top:4px;" onclick="mostrarTodasEncerradas = true; carregarConversasAtivas();">Ver mais encerradas (${totalEncerradas - 2})</button>`;
+  // --- Aba "Histórico": só encerrado ---
+  const elHistorico = document.getElementById('historico-lista');
+  if (elHistorico) {
+    const encerradas = ordenarPorAtividade(leads.filter((l) => l.status === 'encerrado'));
+    elHistorico.innerHTML = encerradas.length > 0
+      ? encerradas.map(renderizarItem).join('')
+      : `<li class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa encerrada ainda.</li>`;
   }
+}
 
-  el.innerHTML = html;
+// Cor consistente por conversa (mesmo lead sempre com a mesma cor de
+// avatar), só pra dar variedade visual — sem significado nenhum.
+const CORES_AVATAR = ['#2B3990', '#16A34A', '#D97706', '#7C3AED', '#DB2777', '#0891B2'];
+function corAvatar(id) {
+  return CORES_AVATAR[id % CORES_AVATAR.length];
 }
 
 // ---------------- Nova tarefa (agenda) ----------------
