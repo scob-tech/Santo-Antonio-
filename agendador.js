@@ -63,7 +63,7 @@ async function rodarAnaliseDiaria() {
     const resumo = analise.resumo || null;
 
     if (analise.resultado_sugerido === 'convertido') {
-      db.prepare(`UPDATE leads SET resultado = 'convertido', valor_venda = ?, resumo_ia = ? WHERE id = ?`)
+      db.prepare(`UPDATE leads SET resultado = 'convertido', valor_venda = ?, resumo_ia = ?, convertido_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?`)
         .run(analise.valor_sugerido || 0, resumo, lead.id);
       encerradosClassificados.push({
         lead_id: lead.id, nome_cliente: lead.nome_cliente, telefone: lead.telefone,

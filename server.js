@@ -129,6 +129,27 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json(req.usuario);
 });
 
+// Autoatendimento: qualquer vendedor troca a própria senha, desde que
+// informe a senha atual corretamente. Diferente do endpoint de admin
+// (/api/vendedores/:id/redefinir-senha), que não pede a senha antiga —
+// esse aqui é o "esqueci minha senha" normal, sem depender do admin.
+app.post('/api/me/senha', requireAuth, (req, res) => {
+  const { senha_atual, senha_nova } = req.body;
+  if (!senha_atual || !senha_nova) {
+    return res.status(400).json({ erro: 'informe a senha atual e a nova senha' });
+  }
+  if (senha_nova.length < 4) {
+    return res.status(400).json({ erro: 'a nova senha precisa ter pelo menos 4 caracteres' });
+  }
+  const vendedor = db.prepare('SELECT * FROM vendedores WHERE id = ?').get(req.usuario.id);
+  if (!vendedor || !authLib.verificarSenha(senha_atual, vendedor.senha_hash)) {
+    return res.status(401).json({ erro: 'senha atual incorreta' });
+  }
+  const novoHash = authLib.hashSenha(senha_nova);
+  db.prepare('UPDATE vendedores SET senha_hash = ? WHERE id = ?').run(novoHash, req.usuario.id);
+  res.json({ ok: true });
+});
+
 // Setores que o usuário logado pode acessar. Admin vê os 3; os demais
 // só o(s) que estiverem vinculados a ele em vendedor_setores.
 app.get('/api/setores', requireAuth, (req, res) => {
@@ -756,23 +777,30 @@ app.get('/api/vendedores', requireAuth, (req, res) => {
 // LEMBRETES — cada vendedor só vê os seus; admin vê todos
 // ---------------------------------------------------------------
 app.get('/api/lembretes', requireAuth, (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+
+  const status = req.query.status || 'pendentes'; // pendentes | concluidas | todas
+  const condicaoFeito = status === 'concluidas' ? 'lembretes.feito = 1' : status === 'todas' ? '1=1' : 'lembretes.feito = 0';
+  const ordem = status === 'concluidas' ? 'lembretes.quando DESC' : 'lembretes.quando ASC';
+
   let lembretes;
   if (ehGestor(req.usuario)) {
     lembretes = db.prepare(`
       SELECT lembretes.*, leads.nome_cliente, leads.telefone
       FROM lembretes
       JOIN leads ON leads.id = lembretes.lead_id
-      WHERE lembretes.feito = 0
-      ORDER BY lembretes.quando ASC
-    `).all();
+      WHERE ${condicaoFeito} AND leads.setor_id = ?
+      ORDER BY ${ordem}
+    `).all(setorAtivo.id);
   } else {
     lembretes = db.prepare(`
       SELECT lembretes.*, leads.nome_cliente, leads.telefone
       FROM lembretes
       JOIN leads ON leads.id = lembretes.lead_id
-      WHERE lembretes.feito = 0 AND lembretes.vendedor_id = ?
-      ORDER BY lembretes.quando ASC
-    `).all(req.usuario.id);
+      WHERE ${condicaoFeito} AND lembretes.vendedor_id = ? AND leads.setor_id = ?
+      ORDER BY ${ordem}
+    `).all(req.usuario.id, setorAtivo.id);
   }
   res.json(lembretes);
 });
@@ -1033,6 +1061,73 @@ app.get('/api/relatorio', requireAuth, (req, res) => {
   } else {
     res.json(calcularRelatorio(dataISO, req.usuario.id));
   }
+});
+
+// ---------------------------------------------------------------
+// PROGRESSO: gráfico de vendas (leads convertidos) por período —
+// usa o que a análise diária da IA já preenche (resultado/valor_venda/
+// convertido_em), sem precisar de tabela nova.
+// ---------------------------------------------------------------
+function agruparPorGranularidade(vendas, granularidade) {
+  const buckets = new Map();
+  for (const v of vendas) {
+    const bruto = v.convertido_em.includes('Z') ? v.convertido_em : v.convertido_em + 'Z';
+    const data = new Date(bruto);
+    let key, label;
+    if (granularidade === 'mensal') {
+      key = `${data.getUTCFullYear()}-${String(data.getUTCMonth() + 1).padStart(2, '0')}`;
+      label = data.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+    } else if (granularidade === 'semanal') {
+      const inicioSemana = new Date(data);
+      inicioSemana.setUTCDate(data.getUTCDate() - data.getUTCDay());
+      const fimSemana = new Date(inicioSemana);
+      fimSemana.setUTCDate(inicioSemana.getUTCDate() + 6);
+      key = inicioSemana.toISOString().slice(0, 10);
+      label = `${inicioSemana.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' })}–${fimSemana.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' })}`;
+    } else {
+      key = data.toISOString().slice(0, 10);
+      label = data.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+    }
+    if (!buckets.has(key)) buckets.set(key, { key, label, value: 0 });
+    buckets.get(key).value += 1;
+  }
+  return [...buckets.values()].sort((a, b) => (a.key < b.key ? -1 : 1));
+}
+
+app.get('/api/relatorio/progresso', requireAuth, (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+
+  const periodo = req.query.periodo || 'semana'; // semana | mes | 3meses
+  const granularidade = req.query.granularidade || 'diario'; // diario | semanal | mensal
+  const dias = { semana: 7, mes: 30, '3meses': 90 }[periodo] || 7;
+
+  // Vendedor só acompanha o próprio progresso; gestor vê o setor inteiro.
+  const escopoPessoal = !ehGestor(req.usuario);
+  const desdeAtual = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+  const desdeAnterior = new Date(Date.now() - dias * 2 * 24 * 60 * 60 * 1000).toISOString();
+
+  const vendas = escopoPessoal
+    ? db.prepare(`SELECT convertido_em, valor_venda FROM leads WHERE resultado = 'convertido' AND setor_id = ? AND vendedor_id = ? AND convertido_em >= ?`)
+        .all(setorAtivo.id, req.usuario.id, desdeAnterior)
+    : db.prepare(`SELECT convertido_em, valor_venda FROM leads WHERE resultado = 'convertido' AND setor_id = ? AND convertido_em >= ?`)
+        .all(setorAtivo.id, desdeAnterior);
+
+  const atual = vendas.filter((v) => v.convertido_em >= desdeAtual);
+  const anterior = vendas.filter((v) => v.convertido_em < desdeAtual);
+
+  const total = atual.length;
+  const totalAnterior = anterior.length;
+  const comparacao = totalAnterior > 0
+    ? Math.round(((total - totalAnterior) / totalAnterior) * 100)
+    : (total > 0 ? 100 : 0);
+
+  res.json({
+    total,
+    mediaPorDia: +(total / dias).toFixed(1),
+    comparacao,
+    buckets: agruparPorGranularidade(atual, granularidade),
+  });
 });
 
 // ---------------------------------------------------------------

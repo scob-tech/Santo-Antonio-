@@ -169,6 +169,16 @@ if (!colunaExiste('leads', 'visto_em')) {
 if (!colunaExiste('leads', 'setor_id')) {
   db.exec(`ALTER TABLE leads ADD COLUMN setor_id INTEGER`);
 }
+// Quando o lead virou venda de verdade — usado pro gráfico de Progresso.
+// Sem essa coluna, só teríamos a data de CRIAÇÃO do lead, que não é a
+// mesma coisa que a data da venda (a análise diária pode confirmar a
+// conversão dias depois da primeira mensagem).
+if (!colunaExiste('leads', 'convertido_em')) {
+  db.exec(`ALTER TABLE leads ADD COLUMN convertido_em TEXT`);
+  // Vendas já registradas antes dessa coluna existir usam a data de
+  // criação do lead como aproximação — melhor que sumir do gráfico.
+  db.exec(`UPDATE leads SET convertido_em = criado_em WHERE resultado = 'convertido' AND convertido_em IS NULL`);
+}
 
 // ---------------------------------------------------------------
 // SETORES: cria os 3 setores padrão (se ainda não existirem) e faz o
