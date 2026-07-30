@@ -76,6 +76,26 @@ db.exec(`
     public_key TEXT NOT NULL,
     private_key TEXT NOT NULL
   );
+
+  -- Setores da loja (Vendas, Financeiro, Expedição, ...). Cada setor vai
+  -- ter seu próprio número de WhatsApp no futuro; por enquanto isso aqui
+  -- é só a estrutura de dados + controle de acesso.
+  CREATE TABLE IF NOT EXISTS setores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,   -- 'vendas' | 'financeiro' | 'expedicao'
+    nome TEXT NOT NULL           -- rótulo bonito pra exibir na tela
+  );
+
+  -- Quem tem acesso a qual setor. Vendedor de Financeiro só aparece aqui
+  -- ligado a 'financeiro', por exemplo — sem essa linha, sem acesso.
+  -- Admin não precisa de linha aqui: acesso total já vem do role.
+  CREATE TABLE IF NOT EXISTS vendedor_setores (
+    vendedor_id INTEGER NOT NULL,
+    setor_id INTEGER NOT NULL,
+    PRIMARY KEY (vendedor_id, setor_id),
+    FOREIGN KEY (vendedor_id) REFERENCES vendedores(id),
+    FOREIGN KEY (setor_id) REFERENCES setores(id)
+  );
 `);
 
 // ---------------------------------------------------------------
@@ -142,6 +162,50 @@ if (!colunaExiste('mensagens', 'midia_tipo')) {
 if (!colunaExiste('leads', 'visto_em')) {
   db.exec(`ALTER TABLE leads ADD COLUMN visto_em TEXT`);
 }
+// a qual setor esse lead pertence (Vendas, Financeiro, Expedição...).
+// Todo lead que já existia antes dos setores existirem vai pro setor
+// "vendas" — é o único que já existia até aqui, então nada muda pra
+// ninguém que já está usando o sistema.
+if (!colunaExiste('leads', 'setor_id')) {
+  db.exec(`ALTER TABLE leads ADD COLUMN setor_id INTEGER`);
+}
+
+// ---------------------------------------------------------------
+// SETORES: cria os 3 setores padrão (se ainda não existirem) e faz o
+// backfill pra tudo que já existia antes desse conceito existir —
+// sem isso, todo lead e vendedor antigo ficaria "sem setor" e sumiria
+// das telas assim que a lógica de setor entrar em uso de verdade.
+// ---------------------------------------------------------------
+const SETORES_PADRAO = [
+  { slug: 'vendas', nome: 'Vendas' },
+  { slug: 'financeiro', nome: 'Financeiro' },
+  { slug: 'expedicao', nome: 'Expedição' },
+];
+for (const s of SETORES_PADRAO) {
+  const existe = db.prepare(`SELECT id FROM setores WHERE slug = ?`).get(s.slug);
+  if (!existe) {
+    db.prepare(`INSERT INTO setores (slug, nome) VALUES (?, ?)`).run(s.slug, s.nome);
+  }
+}
+const setorVendas = db.prepare(`SELECT id FROM setores WHERE slug = 'vendas'`).get();
+
+// Todo lead sem setor definido (ou seja, criado antes desse recurso
+// existir) é automaticamente um lead de Vendas — é o único setor que
+// existia até agora.
+db.prepare(`UPDATE leads SET setor_id = ? WHERE setor_id IS NULL`).run(setorVendas.id);
+
+// Todo vendedor (exceto admin, que já tem acesso total pelo role) que
+// ainda não tem NENHUM setor atribuído recebe acesso a Vendas — preserva
+// o acesso que ele já tinha, sem sobrescrever se um admin já tiver
+// configurado esse vendedor manualmente pra outro setor no meio tempo.
+const vendedoresSemSetor = db.prepare(`
+  SELECT id FROM vendedores
+  WHERE role != 'admin' AND id NOT IN (SELECT DISTINCT vendedor_id FROM vendedor_setores)
+`).all();
+const concederAcessoVendas = db.prepare(
+  `INSERT OR IGNORE INTO vendedor_setores (vendedor_id, setor_id) VALUES (?, ?)`
+);
+for (const v of vendedoresSemSetor) concederAcessoVendas.run(v.id, setorVendas.id);
 
 // ---------------------------------------------------------------
 // Garante que sempre existe pelo menos 1 administrador.
@@ -178,3 +242,25 @@ function getOuCriarChavesVapid() {
 
 module.exports = db;
 module.exports.getOuCriarChavesVapid = getOuCriarChavesVapid;
+
+// Setores que esse vendedor pode acessar — [{ id, slug, nome }]. Não
+// inclui verificação de admin aqui de propósito: quem decide "admin vê
+// tudo" é a camada de cima (server.js), essa função só reflete o que
+// está na tabela vendedor_setores.
+module.exports.getSetoresPermitidos = function (vendedorId) {
+  return db.prepare(`
+    SELECT setores.id, setores.slug, setores.nome
+    FROM vendedor_setores
+    JOIN setores ON setores.id = vendedor_setores.setor_id
+    WHERE vendedor_setores.vendedor_id = ?
+    ORDER BY setores.id ASC
+  `).all(vendedorId);
+};
+
+module.exports.getTodosSetores = function () {
+  return db.prepare(`SELECT id, slug, nome FROM setores ORDER BY id ASC`).all();
+};
+
+module.exports.getSetorPorSlug = function (slug) {
+  return db.prepare(`SELECT id, slug, nome FROM setores WHERE slug = ?`).get(slug);
+};

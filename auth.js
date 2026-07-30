@@ -24,12 +24,18 @@ function verificarSenha(senha, armazenado) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-// token -> { id, nome, role, login }
+// token -> { id, nome, role, login, setoresPermitidos }
 const sessoes = new Map();
 
-function criarSessao(usuario) {
+function criarSessao(usuario, setoresPermitidos = []) {
   const token = crypto.randomUUID();
-  sessoes.set(token, { id: usuario.id, nome: usuario.nome, role: usuario.role, login: usuario.login });
+  sessoes.set(token, {
+    id: usuario.id,
+    nome: usuario.nome,
+    role: usuario.role,
+    login: usuario.login,
+    setoresPermitidos, // array de slugs, ex: ['vendas'] — admin ignora isso e vê tudo
+  });
   return token;
 }
 

@@ -48,10 +48,42 @@ function requireGestor(req, res, next) {
 }
 
 // ---------------------------------------------------------------
+// SETORES: helpers de acesso — admin sempre acessa tudo; os demais só
+// o(s) setor(es) vinculados a ele em vendedor_setores (guardado na
+// sessão como setoresPermitidos, um array de slugs).
+// ---------------------------------------------------------------
+function setoresPermitidosDoUsuario(usuario) {
+  return usuario.role === 'admin' ? db.getTodosSetores().map((s) => s.slug) : (usuario.setoresPermitidos || []);
+}
+
+// Resolve qual setor usar numa requisição: o que veio explícito na query
+// (?setor=slug), ou o primeiro setor que o usuário acessa se ele não
+// especificou. Sempre valida que o usuário realmente tem acesso àquele
+// setor — nunca confia cegamente no que veio da query.
+function resolverSetorAtivo(usuario, slugQuery) {
+  const permitidos = setoresPermitidosDoUsuario(usuario);
+  const slugFinal = slugQuery || permitidos[0];
+  if (!slugFinal || !permitidos.includes(slugFinal)) {
+    return { erro: 'setor inválido ou sem acesso a esse setor' };
+  }
+  return db.getSetorPorSlug(slugFinal);
+}
+
+// Confere se esse usuário pode acessar esse lead específico, considerando
+// o setor dele — vendedor de Financeiro não pode ver nem agir num lead de
+// Vendas, mesmo sabendo o ID de propósito ou por acaso. Admin sempre pode.
+function usuarioAcessaLead(usuario, lead) {
+  if (usuario.role === 'admin') return true;
+  if (!lead.setor_id) return true; // lead antigo sem setor definido — não deveria acontecer após a migração, mas não bloqueia por segurança
+  const setor = db.prepare('SELECT slug FROM setores WHERE id = ?').get(lead.setor_id);
+  return setor && setoresPermitidosDoUsuario(usuario).includes(setor.slug);
+}
+
+// ---------------------------------------------------------------
 // LOGIN / LOGOUT / SESSÃO ATUAL
 // ---------------------------------------------------------------
 app.post('/api/login', (req, res) => {
-  const { login, senha } = req.body;
+  const { login, senha, setor } = req.body;
   if (!login || !senha) {
     return res.status(400).json({ erro: 'login e senha são obrigatórios' });
   }
@@ -61,9 +93,29 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ erro: 'login ou senha inválidos' });
   }
 
-  const token = authLib.criarSessao(vendedor);
+  // Admin não precisa de linha em vendedor_setores — acesso total já vem
+  // do role. Pros demais, busca de verdade quais setores ele acessa.
+  const setoresPermitidos = vendedor.role === 'admin'
+    ? db.getTodosSetores().map((s) => s.slug)
+    : db.getSetoresPermitidos(vendedor.id).map((s) => s.slug);
+
+  // Trava: o setor escolhido na tela de login precisa bater com o que
+  // essa conta realmente acessa — mesmo com login/senha certos, login
+  // errado de setor é recusado. Isso evita, por exemplo, alguém digitar
+  // sem querer o login/senha do Financeiro com "Vendas" selecionado (ou
+  // vice-versa) e acabar numa sessão com o contexto errado.
+  if (setor) {
+    const setorValido = setor === 'administrador'
+      ? vendedor.role === 'admin'
+      : setoresPermitidos.includes(setor);
+    if (!setorValido) {
+      return res.status(403).json({ erro: 'Esse usuário não tem acesso ao setor selecionado.' });
+    }
+  }
+
+  const token = authLib.criarSessao(vendedor, setoresPermitidos);
   res.cookie('sessao', token, { httpOnly: true, sameSite: 'lax' });
-  res.json({ ok: true, usuario: { id: vendedor.id, nome: vendedor.nome, role: vendedor.role } });
+  res.json({ ok: true, usuario: { id: vendedor.id, nome: vendedor.nome, role: vendedor.role, setoresPermitidos } });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -75,6 +127,15 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   res.json(req.usuario);
+});
+
+// Setores que o usuário logado pode acessar. Admin vê os 3; os demais
+// só o(s) que estiverem vinculados a ele em vendedor_setores.
+app.get('/api/setores', requireAuth, (req, res) => {
+  if (req.usuario.role === 'admin') {
+    return res.json(db.getTodosSetores());
+  }
+  res.json(db.getSetoresPermitidos(req.usuario.id));
 });
 
 // ---------------------------------------------------------------
@@ -104,7 +165,7 @@ app.post('/api/push/unsubscribe', requireAuth, (req, res) => {
 // CADASTRO DE VENDEDOR (só admin)
 // ---------------------------------------------------------------
 app.post('/api/vendedores', requireAuth, requireAdmin, (req, res) => {
-  const { nome, login, senha, role } = req.body;
+  const { nome, login, senha, role, setores } = req.body;
   if (!nome || !login || !senha) {
     return res.status(400).json({ erro: 'nome, login e senha são obrigatórios' });
   }
@@ -128,6 +189,16 @@ app.post('/api/vendedores', requireAuth, requireAdmin, (req, res) => {
     VALUES (?, ?, ?, ?, 1)
   `).run(nome, login, senha_hash, roleFinal);
 
+  // Quais setores esse vendedor acessa. Se a tela que chamou esse endpoint
+  // ainda não manda esse campo (front atual não manda), cai no padrão
+  // 'vendas' — mantém o comportamento de hoje sem quebrar nada.
+  const slugsRecebidos = Array.isArray(setores) && setores.length > 0 ? setores : ['vendas'];
+  const inserirAcesso = db.prepare(`INSERT OR IGNORE INTO vendedor_setores (vendedor_id, setor_id) VALUES (?, ?)`);
+  for (const slug of slugsRecebidos) {
+    const setor = db.getSetorPorSlug(slug);
+    if (setor) inserirAcesso.run(info.lastInsertRowid, setor.id);
+  }
+
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
@@ -150,7 +221,7 @@ app.post('/api/vendedores/:id/redefinir-senha', requireAuth, requireAdmin, (req,
 
 // Admin edita nome, login ou nível de acesso de qualquer conta.
 app.patch('/api/vendedores/:id', requireAuth, requireAdmin, (req, res) => {
-  const { nome, login, role } = req.body;
+  const { nome, login, role, setores } = req.body;
 
   const vendedor = db.prepare('SELECT * FROM vendedores WHERE id = ?').get(req.params.id);
   if (!vendedor) return res.status(404).json({ erro: 'vendedor não encontrado' });
@@ -164,6 +235,18 @@ app.patch('/api/vendedores/:id', requireAuth, requireAdmin, (req, res) => {
 
   db.prepare(`UPDATE vendedores SET nome = ?, login = ?, role = ? WHERE id = ?`)
     .run(nome || vendedor.nome, login || vendedor.login, roleFinal, req.params.id);
+
+  // Só mexe nos setores se o campo veio na requisição — a tela de edição
+  // atual não manda esse campo ainda, então sem ele nada muda no acesso
+  // que o vendedor já tinha.
+  if (Array.isArray(setores)) {
+    db.prepare(`DELETE FROM vendedor_setores WHERE vendedor_id = ?`).run(req.params.id);
+    const inserirAcesso = db.prepare(`INSERT OR IGNORE INTO vendedor_setores (vendedor_id, setor_id) VALUES (?, ?)`);
+    for (const slug of setores) {
+      const setor = db.getSetorPorSlug(slug);
+      if (setor) inserirAcesso.run(req.params.id, setor.id);
+    }
+  }
 
   res.json({ ok: true });
 });
@@ -270,10 +353,16 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   }
 
   const insertLead = db.prepare(`
-    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse)
-    VALUES (?, ?, ?, ?, 'novo', ?)
+    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse, setor_id)
+    VALUES (?, ?, ?, ?, 'novo', ?, ?)
   `);
-  const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', interesse);
+  // Só existe 1 número de WhatsApp (Z-API) configurado até agora, o de
+  // Vendas — então todo lead que chega por aqui é de Vendas. Quando
+  // Financeiro e Expedição ganharem seus próprios números, esse trecho
+  // precisa identificar de qual número a mensagem chegou pra escolher o
+  // setor certo (hoje o zapi.js não distingue instâncias).
+  const setorWebhook = db.getSetorPorSlug('vendas');
+  const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', interesse, setorWebhook.id);
   const leadId = info.lastInsertRowid;
 
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
@@ -366,11 +455,14 @@ app.get('/api/leads/buscar', requireAuth, (req, res) => {
   const termo = (req.query.q || '').trim();
   if (termo.length < 2) return res.json([]);
 
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+
   const todos = db.prepare(`
     SELECT * FROM leads
-    WHERE (nome_cliente LIKE ? OR telefone LIKE ?)
+    WHERE (nome_cliente LIKE ? OR telefone LIKE ?) AND setor_id = ?
     ORDER BY criado_em DESC LIMIT 30
-  `).all(`%${termo}%`, `%${termo}%`);
+  `).all(`%${termo}%`, `%${termo}%`, setorAtivo.id);
 
   const visiveis = todos.filter((l) => ehGestor(req.usuario) || l.vendedor_id === req.usuario.id);
 
@@ -385,7 +477,9 @@ app.get('/api/leads/buscar', requireAuth, (req, res) => {
 });
 
 app.get('/api/leads', requireAuth, (req, res) => {
-  const { status, data } = req.query;
+  const { status, data, setor } = req.query;
+  const setorAtivo = resolverSetorAtivo(req.usuario, setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
   let leads;
 
   if (status) {
@@ -400,22 +494,22 @@ app.get('/api/leads', requireAuth, (req, res) => {
       // podem usar pra olhar só um dia específico, se quiserem).
       if (data) {
         leads = db.prepare(`
-          SELECT * FROM leads WHERE status IN (${placeholders}) AND date(criado_em) = date(?)
+          SELECT * FROM leads WHERE status IN (${placeholders}) AND setor_id = ? AND date(criado_em) = date(?)
           ORDER BY criado_em ASC
-        `).all(...statusList, data);
+        `).all(...statusList, setorAtivo.id, data);
       } else {
         leads = db.prepare(`
-          SELECT * FROM leads WHERE status IN (${placeholders})
+          SELECT * FROM leads WHERE status IN (${placeholders}) AND setor_id = ?
           ORDER BY criado_em ASC
-        `).all(...statusList);
+        `).all(...statusList, setorAtivo.id);
       }
     } else {
       // Conversas ativas (em_atendimento + encerrado): sem filtro de data,
       // acumula tudo tipo WhatsApp — nunca some.
-      leads = db.prepare(`SELECT * FROM leads WHERE status IN (${placeholders}) ORDER BY criado_em DESC`).all(...statusList);
+      leads = db.prepare(`SELECT * FROM leads WHERE status IN (${placeholders}) AND setor_id = ? ORDER BY criado_em DESC`).all(...statusList, setorAtivo.id);
     }
   } else {
-    leads = db.prepare('SELECT * FROM leads ORDER BY criado_em DESC').all();
+    leads = db.prepare('SELECT * FROM leads WHERE setor_id = ? ORDER BY criado_em DESC').all(setorAtivo.id);
   }
 
   const resultado = leads.map((lead) => {
@@ -455,6 +549,9 @@ app.get('/api/leads', requireAuth, (req, res) => {
 app.get('/api/leads/:id', requireAuth, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
 
   const dono = lead.vendedor_id === req.usuario.id;
   const podeVer = ehGestor(req.usuario) || dono || lead.status === 'novo';
@@ -476,6 +573,9 @@ app.get('/api/leads/:id', requireAuth, (req, res) => {
 app.post('/api/leads/:id/claim', requireAuth, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
 
   if (lead.vendedor_id) {
     return res.status(409).json({ erro: 'lead já foi puxado por outro vendedor' });
@@ -503,6 +603,9 @@ app.post('/api/leads/:id/transferir', requireAuth, (req, res) => {
 
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
 
   const dono = lead.vendedor_id === req.usuario.id;
   if (!ehGestor(req.usuario) && !dono) {
@@ -524,16 +627,19 @@ app.post('/api/leads/:id/transferir', requireAuth, (req, res) => {
 // verdade depois, faz isso normalmente pela conversa (decisão dele, com
 // o mesmo cuidado de sempre sobre iniciar conversa com número novo).
 app.post('/api/leads/manual', requireAuth, (req, res) => {
-  const { telefone, nome_cliente, observacao } = req.body;
+  const { telefone, nome_cliente, observacao, setor } = req.body;
   if (!telefone) return res.status(400).json({ erro: 'telefone é obrigatório' });
+
+  const setorAtivo = resolverSetorAtivo(req.usuario, setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
 
   const existente = db.prepare(`SELECT id FROM leads WHERE telefone = ? AND status != 'encerrado'`).get(telefone);
   if (existente) return res.status(409).json({ erro: 'já existe uma conversa em aberto com esse telefone' });
 
   const info = db.prepare(`
-    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, vendedor_id)
-    VALUES (?, ?, ?, 'manual', 'em_atendimento', ?)
-  `).run(telefone, nome_cliente || null, observacao || 'Lead cadastrado manualmente', req.usuario.id);
+    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, vendedor_id, setor_id)
+    VALUES (?, ?, ?, 'manual', 'em_atendimento', ?, ?)
+  `).run(telefone, nome_cliente || null, observacao || 'Lead cadastrado manualmente', req.usuario.id, setorAtivo.id);
 
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'nota', ?)`)
     .run(info.lastInsertRowid, observacao || `Lead cadastrado manualmente por ${req.usuario.nome}`);
@@ -546,6 +652,9 @@ app.post('/api/leads/manual', requireAuth, (req, res) => {
 app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
 
   const dono = lead.vendedor_id === req.usuario.id;
   if (!ehGestor(req.usuario) && !dono) {
@@ -568,6 +677,9 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
 app.post('/api/leads/:id/reabrir', requireAuth, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
   if (lead.status !== 'encerrado') {
     return res.status(400).json({ erro: 'esse lead não está encerrado' });
   }
@@ -594,6 +706,9 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
 
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
 
   const dono = lead.vendedor_id === req.usuario.id;
   if (!ehGestor(req.usuario) && !dono) {
@@ -629,7 +744,10 @@ app.get('/api/vendedores', requireAuth, (req, res) => {
     const leadsAtivos = db.prepare(
       `SELECT COUNT(*) AS n FROM leads WHERE vendedor_id = ? AND status = 'em_atendimento'`
     ).get(v.id).n;
-    return { ...v, leads_ativos: leadsAtivos };
+    const setores = v.role === 'admin'
+      ? db.getTodosSetores().map((s) => s.slug)
+      : db.getSetoresPermitidos(v.id).map((s) => s.slug);
+    return { ...v, leads_ativos: leadsAtivos, setores };
   });
   res.json(comContagem);
 });
@@ -708,6 +826,9 @@ app.post('/api/admin/rodar-analise-diaria', requireAuth, requireGestor, async (r
 app.get('/api/leads/:id/sugestao-encerramento', requireAuth, async (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
 
   const dono = lead.vendedor_id === req.usuario.id;
   if (!ehGestor(req.usuario) && !dono) {
@@ -726,6 +847,9 @@ app.get('/api/leads/:id/sugestao-encerramento', requireAuth, async (req, res) =>
 app.get('/api/leads/:id/sugestao-tarefa', requireAuth, async (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
 
   const dono = lead.vendedor_id === req.usuario.id;
   if (!ehGestor(req.usuario) && !dono) {
