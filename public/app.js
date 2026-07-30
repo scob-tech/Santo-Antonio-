@@ -104,11 +104,29 @@ function renderizarSeletorSetor() {
 }
 
 const NOMES_SETOR = { vendas: 'Vendas', financeiro: 'Financeiro', expedicao: 'Expedição' };
+function saudacaoPorHorario() {
+  const hora = new Date().getHours();
+  if (hora < 12) return 'Bom dia';
+  if (hora < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
 function atualizarPainelTitulo() {
   const el = document.getElementById('painel-titulo');
-  if (!el) return;
+  const subEl = document.getElementById('painel-subtitulo');
+  const acoesEl = document.getElementById('painel-acoes-admin');
+  if (!el || !usuarioAtual) return;
   const nome = NOMES_SETOR[setorAtivo];
-  el.textContent = nome ? `Painel de ${nome}` : 'Painel';
+
+  if (ehGestor(usuarioAtual)) {
+    el.textContent = nome ? `Painel de ${nome}` : 'Painel';
+    subEl.textContent = 'Visão geral de todos os atendimentos.';
+    acoesEl.style.display = 'flex';
+  } else {
+    el.textContent = `${saudacaoPorHorario()}, ${usuarioAtual.nome.split(' ')[0]}! 👋`;
+    subEl.textContent = 'Vamos juntos fazer mais um dia incrível de conquistas.';
+    acoesEl.style.display = 'none';
+  }
 }
 
 function mudarSetor(slug) {
@@ -142,17 +160,59 @@ function mudarView(nome) {
     btn.classList.toggle('is-active', btn.dataset.view === nome);
   });
   document.getElementById('view-title').textContent = TITULOS_VIEW[nome] || '';
+  if (nome === 'progresso') carregarProgresso();
+}
+
+let progressoPeriodo = 'semana';
+let progressoGranularidade = 'diario';
+
+function mudarProgresso(campo, valor) {
+  if (campo === 'periodo') progressoPeriodo = valor;
+  else progressoGranularidade = valor;
+  const containerId = campo === 'periodo' ? 'progresso-periodo' : 'progresso-granularidade';
+  document.querySelectorAll(`#${containerId} .filter-chip`).forEach((b) => {
+    b.classList.toggle('is-active', b.dataset[campo] === valor);
+  });
+  carregarProgresso();
+}
+
+async function carregarProgresso() {
+  if (!setorAtivo) return;
+  const res = await fetch(`${API}/api/relatorio/progresso?periodo=${progressoPeriodo}&granularidade=${progressoGranularidade}&setor=${setorAtivo}`);
+  if (res.status === 401) return window.location.href = '/login.html';
+  if (!res.ok) return;
+  const dados = await res.json();
+
+  document.getElementById('progresso-total').textContent = `${dados.total} pedido${dados.total === 1 ? '' : 's'}`;
+  document.getElementById('progresso-media').textContent = dados.mediaPorDia;
+
+  const compEl = document.getElementById('progresso-comparacao');
+  const sinal = dados.comparacao > 0 ? '▲ +' : dados.comparacao < 0 ? '▼ ' : '';
+  compEl.textContent = `${sinal}${dados.comparacao}% vs período anterior`;
+  compEl.style.color = dados.comparacao > 0 ? 'var(--green)' : dados.comparacao < 0 ? 'var(--red)' : 'var(--muted)';
+
+  const rotuloGranularidade = { diario: 'DIÁRIA', semanal: 'SEMANAL', mensal: 'MENSAL' }[progressoGranularidade];
+  document.getElementById('progresso-grafico-titulo').textContent = `VENDAS · ${rotuloGranularidade}`;
+
+  const grafico = document.getElementById('progresso-grafico');
+  if (dados.buckets.length === 0) {
+    grafico.innerHTML = `<div class="empty-state" style="width:100%;">Nenhuma venda registrada nesse período ainda.</div>`;
+    return;
+  }
+  const maiorValor = Math.max(...dados.buckets.map((b) => b.value), 1);
+  grafico.innerHTML = dados.buckets.map((b) => `
+    <div class="progresso-barra-col">
+      <span class="progresso-barra-valor">${b.value}</span>
+      <div class="progresso-barra" style="height:${Math.max((b.value / maiorValor) * 180, 3)}px;"></div>
+      <span class="progresso-barra-label">${b.label}</span>
+    </div>
+  `).join('');
 }
 
 function renderizarUserBox() {
   const el = document.getElementById('user-box');
   const rotulos = { admin: 'Admin', supervisor: 'Supervisor', vendedor: 'Vendedor' };
   const iniciaisUsuario = iniciais(usuarioAtual.nome);
-
-  const itemMinhaSenha = usuarioAtual.role === 'admin'
-    ? `<button class="user-dropdown-item" onclick="abrirModalSenha(${usuarioAtual.id}, 'você')">🔑 Minha senha</button>` : '';
-  const itemLimparDemo = usuarioAtual.login === LOGIN_DESENVOLVEDOR
-    ? `<button class="user-dropdown-item" id="btn-limpar-demo" onclick="limparDadosDemo()">🗑️ Limpar demo</button>` : '';
 
   el.innerHTML = `
     <div class="user-chip" onclick="toggleUserDropdown(event)">
@@ -163,20 +223,19 @@ function renderizarUserBox() {
       </div>
       <span class="chevron">▾</span>
       <div class="user-dropdown" id="user-dropdown" hidden>
-        <button class="user-dropdown-item" id="btn-notificacoes" onclick="event.stopPropagation(); alternarNotificacoes()">🔔 Ativar notificações</button>
-        ${itemMinhaSenha}
-        ${itemLimparDemo}
+        <button class="user-dropdown-item" onclick="event.stopPropagation(); document.getElementById('user-dropdown').hidden = true; mudarView('configuracoes');">⚙️ Configurações</button>
         <div class="user-dropdown-divider"></div>
-        <button class="user-dropdown-item user-dropdown-item--danger" onclick="sair()">Sair</button>
+        <button class="user-dropdown-item user-dropdown-item--danger" onclick="sair()">🚪 Sair</button>
       </div>
     </div>
   `;
-  atualizarBotaoNotificacoes();
+  renderizarConfiguracoes();
+
+  renderizarConfiguracoes();
 
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
   if (usuarioAtual.role === 'admin') {
     document.getElementById('painel-vendedores').style.display = 'block';
-    document.getElementById('config-sem-acesso').style.display = 'none';
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
@@ -187,6 +246,70 @@ function renderizarUserBox() {
   }
   if (usuarioAtual.role !== 'supervisor') {
     document.getElementById('btn-relatorio').style.display = 'inline-block';
+  }
+}
+
+// Card "Cadastros" da tela de Configurações — conteúdo muda conforme o
+// papel. Cadastro de vendedor continua exclusivo de admin (o formulário
+// de verdade fica na seção "Equipe", abaixo); cadastro de clientes ainda
+// não existe como tela própria — quando existir, entra aqui pro vendedor.
+function renderizarConfiguracoes() {
+  const el = document.getElementById('config-cadastros');
+  if (!el) return;
+  if (usuarioAtual.role === 'admin') {
+    el.innerHTML = `
+      <h3>Cadastros</h3>
+      <p>Cadastrar novo vendedor no sistema.</p>
+      <button class="btn-primary btn-small" style="width:100%;" onclick="document.getElementById('painel-vendedores').scrollIntoView({behavior:'smooth'}); document.getElementById('cadastro-form').classList.add('aberto');">+ Cadastrar vendedor</button>
+      <p style="font-size:11.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">A lista da equipe fica logo abaixo, nessa mesma tela.</p>
+    `;
+  } else {
+    el.innerHTML = `
+      <h3>Cadastros</h3>
+      <p>Cadastrar novo vendedor no sistema.</p>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">Somente administradores podem cadastrar novos usuários.</p>
+    `;
+  }
+}
+
+// Tema claro/escuro — só visual, guardado no navegador (não é por conta,
+// é por dispositivo mesmo).
+function alternarTema() {
+  const escuro = document.getElementById('toggle-tema').checked;
+  document.body.classList.toggle('tema-escuro', escuro);
+  document.getElementById('tema-label-texto').textContent = escuro ? 'Tema escuro' : 'Tema claro';
+  localStorage.setItem('temaEscuro', escuro ? '1' : '0');
+}
+function aplicarTemaSalvo() {
+  const escuro = localStorage.getItem('temaEscuro') === '1';
+  document.body.classList.toggle('tema-escuro', escuro);
+  const toggle = document.getElementById('toggle-tema');
+  const label = document.getElementById('tema-label-texto');
+  if (toggle) toggle.checked = escuro;
+  if (label) label.textContent = escuro ? 'Tema escuro' : 'Tema claro';
+}
+
+async function salvarSenhaConfig() {
+  const senha_atual = document.getElementById('senha-atual-config').value;
+  const senha_nova = document.getElementById('senha-nova-config').value;
+  const msgEl = document.getElementById('senha-config-msg');
+  msgEl.textContent = '';
+  msgEl.className = 'msg';
+
+  const res = await fetch(`${API}/api/me/senha`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ senha_atual, senha_nova }),
+  });
+  const data = await res.json();
+  if (res.ok) {
+    msgEl.textContent = 'Senha alterada com sucesso.';
+    msgEl.className = 'msg ok';
+    document.getElementById('senha-atual-config').value = '';
+    document.getElementById('senha-nova-config').value = '';
+  } else {
+    msgEl.textContent = data.erro || 'Erro ao trocar a senha';
+    msgEl.className = 'msg erro';
   }
 }
 
@@ -1057,26 +1180,97 @@ async function abrirRelatorio() {
   abrirModal('modal-relatorio');
 }
 
+let abaAgendaAtual = 'pendentes';
+
+// Badge vermelho no ícone da Agenda, na sidebar — sempre mostra quantas
+// tarefas estão PENDENTES, não importa qual aba da Agenda está aberta.
+function atualizarBadgeAgenda(quantidade) {
+  const badge = document.getElementById('nav-agenda-badge');
+  if (!badge) return;
+  badge.textContent = quantidade > 9 ? '9+' : quantidade;
+  badge.hidden = quantidade === 0;
+}
+async function atualizarContadorPendentesAgenda() {
+  if (!setorAtivo) return;
+  const res = await fetch(`${API}/api/lembretes?status=pendentes&setor=${setorAtivo}`);
+  if (!res.ok) return;
+  const pendentes = await res.json();
+  atualizarBadgeAgenda(pendentes.length);
+}
+
+function mudarAbaAgenda(status) {
+  abaAgendaAtual = status;
+  document.querySelectorAll('#agenda-abas .filter-chip').forEach((b) => {
+    b.classList.toggle('is-active', b.dataset.status === status);
+  });
+  carregarLembretes();
+}
+
+// Categoriza o lembrete pra mostrar a tag certa (Gargalo/Oportunidade/Pós-venda/Manual).
+// A tabela não guarda essa categoria direto — mas todo lembrete criado
+// pela IA tem o título prefixado com "🤖 " (ver agendador.js), e dentro
+// desse grupo o campo `tipo` já diferencia oportunidade/pós-venda do resto.
+function categoriaLembrete(l) {
+  const daIA = l.titulo && l.titulo.startsWith('🤖');
+  if (!daIA) return { label: 'Manual', classe: 'tag-manual' };
+  if (l.tipo === 'oportunidade') return { label: 'Oportunidade', classe: 'tag-oportunidade' };
+  if (l.tipo === 'pos_venda') return { label: 'Pós-venda', classe: 'tag-manual' };
+  return { label: 'Gargalo', classe: 'tag-gargalo' };
+}
+
+function formatarQuandoAgenda(dataStr) {
+  const data = new Date(dataStr);
+  const agora = new Date();
+  const hora = data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  if (agora.toDateString() === data.toDateString()) return `hoje, ${hora}`;
+  const ontem = new Date(agora);
+  ontem.setDate(ontem.getDate() - 1);
+  if (ontem.toDateString() === data.toDateString()) return `ontem, ${hora}`;
+  return `${data.toLocaleDateString('pt-BR')}, ${hora}`;
+}
+
 async function carregarLembretes() {
-  const res = await fetch(`${API}/api/lembretes`);
+  if (!setorAtivo) return;
+  const res = await fetch(`${API}/api/lembretes?status=${abaAgendaAtual}&setor=${setorAtivo}`);
   if (res.status === 401) return window.location.href = '/login.html';
   const lembretes = await res.json();
   const el = document.getElementById('lembretes');
   if (!el) return;
 
+  const subtituloEl = document.getElementById('agenda-subtitulo');
+  if (subtituloEl) {
+    const rotulo = { pendentes: 'pendentes', concluidas: 'concluídas', todas: 'no total' }[abaAgendaAtual];
+    subtituloEl.textContent = `${lembretes.length} tarefa${lembretes.length === 1 ? '' : 's'} ${rotulo}.`;
+  }
+  if (abaAgendaAtual === 'pendentes') {
+    atualizarBadgeAgenda(lembretes.length);
+  }
+
   if (lembretes.length === 0) {
-    el.innerHTML = `<div class="empty-state" style="padding:14px; font-size:12px;">Nenhum lembrete pendente.</div>`;
+    const vazio = { pendentes: 'Nenhuma tarefa pendente.', concluidas: 'Nenhuma tarefa concluída ainda.', todas: 'Nenhuma tarefa ainda.' }[abaAgendaAtual];
+    el.innerHTML = `<div class="empty-state">${vazio}</div>`;
     return;
   }
 
-  el.innerHTML = lembretes.map(l => `
-    <div class="side-card lembrete-clicavel" onclick="abrirConversa(${l.lead_id})">
-      <div class="tipo-badge tipo-${l.tipo || 'outro'}">${LABELS_TIPO[l.tipo] || 'Outro'}</div>
-      <div class="lembrete-titulo">${escapeHtml(l.titulo)}</div>
-      <div class="lembrete-quando">${new Date(l.quando).toLocaleString('pt-BR')}</div>
-      <button onclick="event.stopPropagation(); concluirLembrete(${l.id})">Concluído</button>
-    </div>
-  `).join('');
+  el.innerHTML = lembretes.map((l) => {
+    const cat = categoriaLembrete(l);
+    const tituloLimpo = escapeHtml((l.titulo || '').replace(/^🤖\s*/, ''));
+    const nome = l.nome_cliente || l.telefone;
+    return `
+      <div class="task-card ${l.feito ? 'task-card--feito' : ''}">
+        <button class="task-check" onclick="event.stopPropagation(); ${l.feito ? '' : `concluirLembrete(${l.id})`}" title="${l.feito ? 'Concluída' : 'Marcar como concluída'}">${l.feito ? '✓' : ''}</button>
+        <div class="task-main">
+          <div class="task-top">
+            <span class="task-titulo">${tituloLimpo}</span>
+            <span class="tag ${cat.classe}">${cat.label}</span>
+          </div>
+          <div class="task-sub">
+            ${formatarQuandoAgenda(l.quando)} · <a href="#" onclick="event.preventDefault(); abrirConversa(${l.lead_id})">Abrir conversa com ${escapeHtml(nome)} →</a>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 async function concluirLembrete(id) {
@@ -1126,6 +1320,7 @@ async function atualizarTudo() {
   await carregarLeads();
   await carregarConversasAtivas();
   await carregarLembretes();
+  if (abaAgendaAtual !== 'pendentes') await atualizarContadorPendentesAgenda();
   await atualizarConversaAberta();
 }
 
@@ -1159,34 +1354,40 @@ async function inscricaoAtual() {
 }
 
 async function atualizarBotaoNotificacoes() {
-  const btn = document.getElementById('btn-notificacoes');
-  if (!btn) return;
+  const btns = document.querySelectorAll('.btn-notificacoes-el');
+  if (btns.length === 0) return;
 
   if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-    btn.textContent = '🔕 Notificação indisponível';
-    btn.disabled = true;
-    btn.title = 'Esse navegador não suporta notificação. No iPhone, use "Adicionar à Tela de Início" pelo Safari primeiro.';
+    btns.forEach((btn) => {
+      btn.textContent = '🔕 Notificação indisponível';
+      btn.disabled = true;
+      btn.title = 'Esse navegador não suporta notificação. No iPhone, use "Adicionar à Tela de Início" pelo Safari primeiro.';
+    });
     return;
   }
 
   if (Notification.permission === 'denied') {
-    btn.textContent = '🚫 Notificação bloqueada';
-    btn.title = 'Você bloqueou a notificação pra esse site — pra reativar, muda isso nas configurações do navegador.';
+    btns.forEach((btn) => {
+      btn.textContent = '🚫 Notificação bloqueada';
+      btn.title = 'Você bloqueou a notificação pra esse site — pra reativar, muda isso nas configurações do navegador.';
+    });
     return;
   }
 
   const inscricao = await inscricaoAtual();
-  if (inscricao) {
-    btn.textContent = '🔔 Notificações ativadas';
-    btn.title = 'Clique pra desativar';
-  } else {
-    btn.textContent = '🔕 Ativar notificações';
-    btn.title = 'Receba aviso de lead novo ou mensagem mesmo com o app fechado';
-  }
+  btns.forEach((btn) => {
+    if (inscricao) {
+      btn.textContent = '🔔 Notificações ativadas';
+      btn.title = 'Clique pra desativar';
+    } else {
+      btn.textContent = '🔕 Ativar notificações';
+      btn.title = 'Receba aviso de lead novo ou mensagem mesmo com o app fechado';
+    }
+  });
 }
 
 async function alternarNotificacoes() {
-  const btn = document.getElementById('btn-notificacoes');
+  const btns = document.querySelectorAll('.btn-notificacoes-el');
   if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
     alert('Esse navegador não suporta notificação. No iPhone: abra pelo Safari, toque em Compartilhar → "Adicionar à Tela de Início", e acesse o sistema por esse ícone instalado.');
     return;
@@ -1211,7 +1412,7 @@ async function alternarNotificacoes() {
   }
 
   // Ativar
-  if (btn) btn.textContent = '⏳ Ativando...';
+  btns.forEach((btn) => { btn.textContent = '⏳ Ativando...'; });
   const permissao = await Notification.requestPermission();
   if (permissao !== 'granted') {
     alert('Sem permissão de notificação, não dá pra te avisar de lead novo com o app fechado. Você pode mudar isso depois nas configurações do navegador.');
@@ -1267,6 +1468,7 @@ function configurarSidebarRetratil() {
 }
 
 (async function iniciar() {
+  aplicarTemaSalvo();
   configurarSidebarRetratil();
   const logado = await checarSessao();
   if (!logado) return;

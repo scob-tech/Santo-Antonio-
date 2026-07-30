@@ -30,6 +30,7 @@
     --navy-bg: #E9EAF6;
     --orange: #F5820D;
     --orange-bg: #FFF2E4;
+    --card: #FFFFFF;
   }
 
   * { box-sizing: border-box; }
@@ -502,7 +503,92 @@
 .side-item svg { flex-shrink: 0; }
 .side-item:hover { background: var(--navy-bg); }
 .side-item.is-active { background: var(--navy-bg); color: var(--navy); }
+/* ---------- Agenda: abas + cards de tarefa ---------- */
+.filter-chips { display: flex; gap: 8px; margin-bottom: 16px; }
+.filter-chip { border: 1px solid var(--border); background: white; color: var(--muted); padding: 7px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; }
+.filter-chip.is-active { background: var(--navy-bg); color: var(--navy); border-color: transparent; }
+
+#lembretes { background: white; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.task-card { display: flex; align-items: flex-start; gap: 14px; padding: 16px 20px; border-top: 1px solid var(--border); }
+.task-card:first-child { border-top: none; }
+.task-card--feito .task-titulo { text-decoration: line-through; color: var(--muted); }
+.task-check {
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--border); flex-shrink: 0;
+  margin-top: 2px; cursor: pointer; background: white; position: relative; color: white; font-size: 12px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.task-card--feito .task-check { background: var(--green); border-color: var(--green); cursor: default; }
+.task-main { flex: 1; min-width: 0; }
+.task-top { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; flex-wrap: wrap; }
+.task-titulo { font-weight: 700; font-size: 14px; }
+.tag-gargalo { background: #FCE4E3; color: var(--red); }
+.tag-oportunidade { background: var(--green-bg); color: var(--green); }
+.tag-manual { background: var(--bg); color: var(--muted); }
+.task-sub { font-size: 12.5px; color: var(--muted); }
+.task-sub a { color: var(--navy); font-weight: 600; text-decoration: none; }
+.task-sub a:hover { text-decoration: underline; }
 .side-divider { height: 1px; background: var(--border); margin: 10px 4px; }
+/* ---------- Configurações: grid de cards ---------- */
+.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.config-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; }
+.config-card h3 { margin: 0 0 4px; font-size: 15px; font-family: 'Oswald', sans-serif; text-transform: uppercase; color: var(--navy); }
+.config-card p { margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+.config-card input { width: 100%; padding: 9px 10px; border-radius: 6px; border: 1px solid var(--border); font-family: 'Inter', sans-serif; font-size: 13px; background: var(--card); color: var(--text); box-sizing: border-box; }
+@media (max-width: 700px) { .config-grid { grid-template-columns: 1fr; } }
+
+.switch-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.switch-toggle input { display: none; }
+.switch-track { width: 38px; height: 22px; border-radius: 11px; background: var(--border); position: relative; transition: background .15s ease; flex-shrink: 0; }
+.switch-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: white; transition: transform .15s ease; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.switch-toggle input:checked + .switch-track { background: var(--navy); }
+.switch-toggle input:checked + .switch-track::after { transform: translateX(16px); }
+
+/* ---------- Tema escuro ---------- */
+body.tema-escuro {
+  --bg: #12151F;
+  --card: #1B1F2C;
+  --border: #2B3040;
+  --text: #E8EAF0;
+  --muted: #8B92A5;
+  --navy-bg: #232A4D;
+  --green-bg: #123321;
+  --orange-bg: #3A2A12;
+  background: var(--bg);
+  color: var(--text);
+}
+body.tema-escuro .sidebar,
+body.tema-escuro .topbar-slim,
+body.tema-escuro .list-card,
+body.tema-escuro #lembretes,
+body.tema-escuro .card,
+body.tema-escuro .modal-box,
+body.tema-escuro .user-dropdown,
+body.tema-escuro .side-card,
+body.tema-escuro .placeholder-view {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--text);
+}
+body.tema-escuro .modal-box input,
+body.tema-escuro .modal-box select,
+body.tema-escuro .modal-box textarea {
+  background: var(--bg); border-color: var(--border); color: var(--text);
+}
+body.tema-escuro .lead-item:hover,
+body.tema-escuro .conv-item:hover,
+body.tema-escuro .side-item:hover,
+body.tema-escuro .switch-item:hover { background: rgba(255,255,255,.05); }
+body.tema-escuro .lead-avatar { background: #3A2226; color: #F0918D; }
+body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
+.side-item { position: relative; }
+.side-badge {
+  background: var(--red); color: white; font-size: 10.5px; font-weight: 700;
+  min-width: 18px; height: 18px; border-radius: 9px; display: inline-flex;
+  align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0;
+  margin-left: auto;
+}
+.side-badge[hidden] { display: none; }
+.sidebar:not(.is-expanded) .side-badge { position: absolute; top: 2px; right: 6px; margin-left: 0; }
 
 .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; margin-left: 76px; }
 
@@ -610,7 +696,15 @@
   .lists-row { grid-template-columns: 1fr; }
 }
 
-/* ---------- Chip do usuário (topo) ---------- */
+/* ---------- Progresso ---------- */
+.card-eyebrow { display: block; font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .5px; margin-bottom: 8px; }
+.progresso-numero { font-family: 'Oswald', sans-serif; font-size: 28px; color: var(--navy); }
+.progresso-grafico { display: flex; align-items: flex-end; gap: 14px; min-height: 220px; padding: 10px 4px 0; overflow-x: auto; }
+.progresso-barra-col { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; min-width: 40px; }
+.progresso-barra-valor { font-size: 12px; font-weight: 700; color: var(--navy); }
+.progresso-barra { width: 34px; background: var(--navy); border-radius: 6px 6px 0 0; min-height: 3px; transition: height .3s ease; }
+.progresso-barra-label { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+
 .user-chip { display: flex; align-items: center; gap: 9px; position: relative; cursor: pointer; padding: 4px; border-radius: 10px; }
 .user-chip:hover { background: var(--bg); }
 .user-chip .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--navy); color: white; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -667,6 +761,7 @@
         <button class="side-item" data-view="agenda" onclick="mudarView('agenda')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           <span>Agenda</span>
+          <span class="side-badge" id="nav-agenda-badge" hidden>0</span>
         </button>
         <button class="side-item" data-view="clientes" onclick="mudarView('clientes')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6M15.5 8.2a3 3 0 1 1 3.8 2.9M20 20c0-2.7-1.7-4.8-4-5.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -738,13 +833,16 @@
           <section class="agenda-header">
             <div>
               <h1>Agenda</h1>
-              <p>Tarefas geradas pela IA e criadas manualmente.</p>
+              <p id="agenda-subtitulo">Tarefas geradas pela IA e criadas manualmente.</p>
             </div>
             <button class="btn-primary btn-small" onclick="abrirNovaTarefa()">+ Nova tarefa</button>
           </section>
-          <div class="card" style="padding: 14px 16px;">
-            <div id="lembretes"></div>
+          <div class="filter-chips" id="agenda-abas">
+            <button class="filter-chip is-active" data-status="pendentes" onclick="mudarAbaAgenda('pendentes')">Pendentes</button>
+            <button class="filter-chip" data-status="concluidas" onclick="mudarAbaAgenda('concluidas')">Concluídas</button>
+            <button class="filter-chip" data-status="todas" onclick="mudarAbaAgenda('todas')">Todas</button>
           </div>
+          <div id="lembretes"></div>
         </div>
 
         <div class="view" id="view-clientes" hidden>
@@ -764,14 +862,88 @@
         </div>
 
         <div class="view" id="view-progresso" hidden>
-          <div class="placeholder-view"><strong>Progresso</strong>Comparativo de desempenho ao longo do tempo — em construção.</div>
+          <section class="agenda-header">
+            <div>
+              <h1>Progresso</h1>
+              <p>Desempenho de vendas — pedidos ao longo do tempo.</p>
+            </div>
+          </section>
+
+          <div style="margin-bottom:6px; font-size:12px; font-weight:700; color:var(--muted);">Período</div>
+          <div class="filter-chips" id="progresso-periodo">
+            <button class="filter-chip is-active" data-periodo="semana" onclick="mudarProgresso('periodo','semana')">Última semana</button>
+            <button class="filter-chip" data-periodo="mes" onclick="mudarProgresso('periodo','mes')">Último mês</button>
+            <button class="filter-chip" data-periodo="3meses" onclick="mudarProgresso('periodo','3meses')">Últimos 3 meses</button>
+          </div>
+          <div style="margin-bottom:6px; font-size:12px; font-weight:700; color:var(--muted);">Visualizar por</div>
+          <div class="filter-chips" id="progresso-granularidade">
+            <button class="filter-chip is-active" data-granularidade="diario" onclick="mudarProgresso('granularidade','diario')">Diário</button>
+            <button class="filter-chip" data-granularidade="semanal" onclick="mudarProgresso('granularidade','semanal')">Semanal</button>
+            <button class="filter-chip" data-granularidade="mensal" onclick="mudarProgresso('granularidade','mensal')">Mensal</button>
+          </div>
+
+          <section class="lists-row" style="margin-top:18px; grid-template-columns: repeat(3, 1fr);">
+            <div class="card config-card">
+              <span class="card-eyebrow">TOTAL NO PERÍODO</span>
+              <div class="progresso-numero" id="progresso-total">0</div>
+            </div>
+            <div class="card config-card">
+              <span class="card-eyebrow">MÉDIA POR DIA</span>
+              <div class="progresso-numero" id="progresso-media">0</div>
+            </div>
+            <div class="card config-card">
+              <span class="card-eyebrow">COMPARAÇÃO</span>
+              <div class="progresso-numero" id="progresso-comparacao" style="font-size:20px;">—</div>
+            </div>
+          </section>
+
+          <div class="card list-card" style="margin-top:20px;">
+            <div class="list-header"><span class="list-title" id="progresso-grafico-titulo">VENDAS</span></div>
+            <div class="progresso-grafico" id="progresso-grafico"></div>
+          </div>
         </div>
 
         <div class="view" id="view-configuracoes" hidden>
-          <div id="painel-vendedores" style="display:none;">
+          <section class="agenda-header">
+            <div>
+              <h1>Configurações</h1>
+              <p>Preferências da sua conta.</p>
+            </div>
+          </section>
+
+          <div class="config-grid">
+            <div class="card config-card">
+              <h3>Tema</h3>
+              <p>Alterne entre claro e escuro.</p>
+              <label class="switch-toggle">
+                <input type="checkbox" id="toggle-tema" onchange="alternarTema()" />
+                <span class="switch-track"></span>
+                <span id="tema-label-texto">Tema claro</span>
+              </label>
+            </div>
+
+            <div class="card config-card">
+              <h3>Notificações</h3>
+              <p>Receba avisos de leads e mensagens novas.</p>
+              <button class="btn-primary btn-small btn-notificacoes-el" onclick="alternarNotificacoes()">🔔 Ativar notificações</button>
+            </div>
+
+            <div class="card config-card">
+              <h3>Senha</h3>
+              <p>Troque sua senha de acesso.</p>
+              <input type="password" id="senha-atual-config" placeholder="Senha atual" style="margin-bottom:8px;" />
+              <input type="password" id="senha-nova-config" placeholder="Nova senha" style="margin-bottom:8px;" />
+              <div class="msg" id="senha-config-msg"></div>
+              <button class="btn-primary btn-small" style="width:100%;" onclick="salvarSenhaConfig()">Salvar senha</button>
+            </div>
+
+            <div class="card config-card" id="config-cadastros"></div>
+          </div>
+
+          <div id="painel-vendedores" style="display:none; margin-top:22px;">
             <section class="agenda-header">
               <div>
-                <h1>Vendedores</h1>
+                <h1 style="font-size:18px;">Equipe</h1>
                 <p>Cadastro e permissões da equipe.</p>
               </div>
               <button class="btn-primary btn-small" id="btn-toggle-cadastro" style="display:none;">+ Cadastrar</button>
@@ -794,7 +966,6 @@
             </div>
             <div id="vendedores"></div>
           </div>
-          <div class="placeholder-view" id="config-sem-acesso"><strong>Configurações</strong>Em construção.</div>
         </div>
       </main>
 
