@@ -709,15 +709,20 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
   if (fechou_pedido === true) {
     db.prepare(`
       UPDATE leads SET status = 'encerrado', resultado = 'convertido', valor_venda = ?,
-        convertido_em = strftime('%Y-%m-%d %H:%M:%f','now')
+        convertido_em = strftime('%Y-%m-%d %H:%M:%f','now'),
+        encerrado_em = strftime('%Y-%m-%d %H:%M:%f','now')
       WHERE id = ?
     `).run(valor_venda || 0, req.params.id);
   } else if (fechou_pedido === false) {
-    db.prepare(`UPDATE leads SET status = 'encerrado', resultado = 'perdido' WHERE id = ?`).run(req.params.id);
+    db.prepare(`
+      UPDATE leads SET status = 'encerrado', resultado = 'perdido',
+        encerrado_em = strftime('%Y-%m-%d %H:%M:%f','now')
+      WHERE id = ?
+    `).run(req.params.id);
   } else {
     // Encerra em 1 clique sem informar resultado — a análise diária da IA
     // lê a conversa depois e preenche isso sozinha.
-    db.prepare(`UPDATE leads SET status = 'encerrado' WHERE id = ?`).run(req.params.id);
+    db.prepare(`UPDATE leads SET status = 'encerrado', encerrado_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?`).run(req.params.id);
   }
 
   res.json({ ok: true });
@@ -1193,6 +1198,81 @@ app.get('/api/relatorio/progresso', requireAuth, (req, res) => {
     comparacao,
     buckets: agruparPorGranularidade(atual, granularidade),
   });
+});
+
+// ---------------------------------------------------------------
+// METAS — 1 meta ativa por vendedor, só admin define. 3 tipos: valor
+// (soma de vendas), pedidos (quantidade de vendas), atendimentos
+// (quantidade de conversas encerradas, com ou sem venda).
+// ---------------------------------------------------------------
+function inicioDoPeriodo(periodo) {
+  const agora = new Date();
+  if (periodo === 'mes') {
+    return new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString();
+  }
+  // semana: segunda-feira desta semana, 00:00
+  const diaSemana = agora.getDay(); // 0 = domingo
+  const diffParaSegunda = diaSemana === 0 ? 6 : diaSemana - 1;
+  const segunda = new Date(agora);
+  segunda.setDate(agora.getDate() - diffParaSegunda);
+  segunda.setHours(0, 0, 0, 0);
+  return segunda.toISOString();
+}
+
+function calcularProgressoMeta(meta) {
+  const desde = inicioDoPeriodo(meta.periodo);
+  let atual = 0;
+  if (meta.tipo === 'valor') {
+    atual = db.prepare(`SELECT COALESCE(SUM(valor_venda),0) AS n FROM leads WHERE resultado='convertido' AND vendedor_id=? AND convertido_em >= ?`)
+      .get(meta.vendedor_id, desde).n;
+  } else if (meta.tipo === 'pedidos') {
+    atual = db.prepare(`SELECT COUNT(*) AS n FROM leads WHERE resultado='convertido' AND vendedor_id=? AND convertido_em >= ?`)
+      .get(meta.vendedor_id, desde).n;
+  } else if (meta.tipo === 'atendimentos') {
+    atual = db.prepare(`SELECT COUNT(*) AS n FROM leads WHERE status='encerrado' AND vendedor_id=? AND encerrado_em >= ?`)
+      .get(meta.vendedor_id, desde).n;
+  }
+  const percentual = meta.valor_meta > 0 ? Math.min(100, Math.round((atual / meta.valor_meta) * 100)) : 0;
+  return { atual, percentual };
+}
+
+app.get('/api/metas/:vendedorId', requireAuth, (req, res) => {
+  const vendedorId = Number(req.params.vendedorId);
+  if (vendedorId !== req.usuario.id && !ehGestor(req.usuario)) {
+    return res.status(403).json({ erro: 'sem permissão pra ver a meta de outro vendedor' });
+  }
+  const meta = db.prepare('SELECT * FROM metas WHERE vendedor_id = ?').get(vendedorId);
+  if (!meta) return res.json({ meta: null });
+  const { atual, percentual } = calcularProgressoMeta(meta);
+  res.json({ meta, atual, percentual });
+});
+
+app.post('/api/metas/:vendedorId', requireAuth, requireAdmin, (req, res) => {
+  const vendedorId = Number(req.params.vendedorId);
+  const { tipo, valor_meta, periodo } = req.body;
+  if (!['valor', 'pedidos', 'atendimentos'].includes(tipo)) {
+    return res.status(400).json({ erro: 'tipo de meta inválido' });
+  }
+  const valorNum = Number(valor_meta);
+  if (!valorNum || valorNum <= 0) {
+    return res.status(400).json({ erro: 'informe um valor de meta maior que zero' });
+  }
+  const periodoFinal = periodo === 'mes' ? 'mes' : 'semana';
+
+  db.prepare(`
+    INSERT INTO metas (vendedor_id, tipo, valor_meta, periodo, definida_por, definida_em)
+    VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
+    ON CONFLICT(vendedor_id) DO UPDATE SET
+      tipo = excluded.tipo, valor_meta = excluded.valor_meta, periodo = excluded.periodo,
+      definida_por = excluded.definida_por, definida_em = excluded.definida_em
+  `).run(vendedorId, tipo, valorNum, periodoFinal, req.usuario.id);
+
+  res.json({ ok: true });
+});
+
+app.delete('/api/metas/:vendedorId', requireAuth, requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM metas WHERE vendedor_id = ?').run(req.params.vendedorId);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------

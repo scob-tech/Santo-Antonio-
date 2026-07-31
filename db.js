@@ -96,6 +96,19 @@ db.exec(`
     FOREIGN KEY (vendedor_id) REFERENCES vendedores(id),
     FOREIGN KEY (setor_id) REFERENCES setores(id)
   );
+
+  -- Meta atual de cada vendedor — 1 por vendedor (definir uma nova
+  -- substitui a anterior). Só admin define; vendedor só acompanha.
+  CREATE TABLE IF NOT EXISTS metas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendedor_id INTEGER NOT NULL UNIQUE,
+    tipo TEXT NOT NULL,          -- 'valor' | 'atendimentos' | 'pedidos'
+    valor_meta REAL NOT NULL,
+    periodo TEXT NOT NULL DEFAULT 'semana', -- 'semana' | 'mes'
+    definida_por INTEGER,
+    definida_em TEXT NOT NULL,
+    FOREIGN KEY (vendedor_id) REFERENCES vendedores(id)
+  );
 `);
 
 // ---------------------------------------------------------------
@@ -184,6 +197,13 @@ if (!colunaExiste('leads', 'convertido_em')) {
   // Vendas já registradas antes dessa coluna existir usam a data de
   // criação do lead como aproximação — melhor que sumir do gráfico.
   db.exec(`UPDATE leads SET convertido_em = criado_em WHERE resultado = 'convertido' AND convertido_em IS NULL`);
+}
+// Quando o atendimento foi encerrado de verdade (convertido OU perdido) —
+// usado pra meta de "número de atendimentos finalizados", que conta
+// qualquer encerramento, não só venda fechada.
+if (!colunaExiste('leads', 'encerrado_em')) {
+  db.exec(`ALTER TABLE leads ADD COLUMN encerrado_em TEXT`);
+  db.exec(`UPDATE leads SET encerrado_em = COALESCE(convertido_em, criado_em) WHERE status = 'encerrado' AND encerrado_em IS NULL`);
 }
 
 // ---------------------------------------------------------------
