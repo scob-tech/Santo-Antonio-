@@ -602,6 +602,18 @@ app.post('/api/leads/:id/claim', requireAuth, (req, res) => {
     return res.status(409).json({ erro: 'lead já foi puxado por outro vendedor' });
   }
 
+  // Limite de 5 conversas simultâneas por vendedor em Vendas — evita
+  // acumular lead sem fechar; admin/supervisor não têm esse limite.
+  const setorDoLeadClaim = db.prepare('SELECT slug FROM setores WHERE id = ?').get(lead.setor_id);
+  if (setorDoLeadClaim && setorDoLeadClaim.slug === 'vendas' && !ehGestor(req.usuario)) {
+    const ativos = db.prepare(
+      `SELECT COUNT(*) AS n FROM leads WHERE vendedor_id = ? AND status = 'em_atendimento' AND setor_id = ?`
+    ).get(req.usuario.id, lead.setor_id).n;
+    if (ativos >= 5) {
+      return res.status(409).json({ erro: 'Você já está com 5 conversas simultâneas em Vendas. Feche alguma antes de pegar outro lead.' });
+    }
+  }
+
   const vendedorId = req.usuario.id;
   db.prepare(`UPDATE leads SET status = 'em_atendimento', vendedor_id = ? WHERE id = ?`)
     .run(vendedorId, req.params.id);
@@ -657,6 +669,15 @@ app.post('/api/leads/manual', requireAuth, (req, res) => {
   const existente = db.prepare(`SELECT id FROM leads WHERE telefone = ? AND status != 'encerrado'`).get(telefone);
   if (existente) return res.status(409).json({ erro: 'já existe uma conversa em aberto com esse telefone' });
 
+  if (setorAtivo.slug === 'vendas' && !ehGestor(req.usuario)) {
+    const ativos = db.prepare(
+      `SELECT COUNT(*) AS n FROM leads WHERE vendedor_id = ? AND status = 'em_atendimento' AND setor_id = ?`
+    ).get(req.usuario.id, setorAtivo.id).n;
+    if (ativos >= 5) {
+      return res.status(409).json({ erro: 'Você já está com 5 conversas simultâneas em Vendas. Feche alguma antes de cadastrar outro lead.' });
+    }
+  }
+
   const info = db.prepare(`
     INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, vendedor_id, setor_id)
     VALUES (?, ?, ?, 'manual', 'em_atendimento', ?, ?)
@@ -682,10 +703,22 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode encerrar' });
   }
 
-  // Encerra em 1 clique — sem perguntar resultado/valor/motivo aqui.
-  // A análise diária da IA lê a conversa depois e preenche isso sozinha
-  // (resultado fica null até lá, contando como "aguardando análise").
-  db.prepare(`UPDATE leads SET status = 'encerrado' WHERE id = ?`).run(req.params.id);
+  // Se o vendedor já disse na hora se fechou ou não, grava isso — senão
+  // fica em aberto (null) e a análise diária da IA preenche depois sozinha.
+  const { fechou_pedido, valor_venda } = req.body || {};
+  if (fechou_pedido === true) {
+    db.prepare(`
+      UPDATE leads SET status = 'encerrado', resultado = 'convertido', valor_venda = ?,
+        convertido_em = strftime('%Y-%m-%d %H:%M:%f','now')
+      WHERE id = ?
+    `).run(valor_venda || 0, req.params.id);
+  } else if (fechou_pedido === false) {
+    db.prepare(`UPDATE leads SET status = 'encerrado', resultado = 'perdido' WHERE id = ?`).run(req.params.id);
+  } else {
+    // Encerra em 1 clique sem informar resultado — a análise diária da IA
+    // lê a conversa depois e preenche isso sozinha.
+    db.prepare(`UPDATE leads SET status = 'encerrado' WHERE id = ?`).run(req.params.id);
+  }
 
   res.json({ ok: true });
 });
@@ -737,7 +770,18 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   }
 
   const rotulos = { imagem: '[Imagem]', audio: '[Áudio]', video: '[Vídeo]', documento: '[Documento]' };
-  const textoFinal = texto || `${rotulos[midia_tipo] || '[Anexo]'}${midia_nome ? ' ' + midia_nome : ''}`;
+  let textoFinal = texto || `${rotulos[midia_tipo] || '[Anexo]'}${midia_nome ? ' ' + midia_nome : ''}`;
+  let textoParaEnviar = texto;
+
+  // Financeiro e Expedição usam 1 número de WhatsApp pra equipe inteira —
+  // sem isso, o cliente não sabe qual pessoa da equipe está falando com
+  // ele. Vendas não precisa (histórico dela é 1 vendedor por cliente).
+  const setorDoLead = db.prepare('SELECT slug FROM setores WHERE id = ?').get(lead.setor_id);
+  if (setorDoLead && (setorDoLead.slug === 'financeiro' || setorDoLead.slug === 'expedicao') && texto) {
+    const prefixo = `*${req.usuario.nome}:*\n`;
+    textoFinal = prefixo + textoFinal;
+    textoParaEnviar = prefixo + texto;
+  }
 
   // Se achou essa conversa pela busca (encerrada) e decidiu escrever de
   // novo, reabre automaticamente — sem precisar de nenhum passo extra.
@@ -750,8 +794,8 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
     .run(req.params.id, textoFinal, midia_base64 || null, midia_tipo || null);
 
   const envio = midia_base64
-    ? await zapi.enviarMidiaWhatsapp(lead.telefone, midia_tipo, midia_base64, midia_nome, texto)
-    : await zapi.enviarMensagemWhatsapp(lead.telefone, texto);
+    ? await zapi.enviarMidiaWhatsapp(lead.telefone, midia_tipo, midia_base64, midia_nome, textoParaEnviar)
+    : await zapi.enviarMensagemWhatsapp(lead.telefone, textoParaEnviar);
 
   res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado });
 });
@@ -781,7 +825,11 @@ app.get('/api/lembretes', requireAuth, (req, res) => {
   if (setorAtivo.erro) return res.status(403).json(setorAtivo);
 
   const status = req.query.status || 'pendentes'; // pendentes | concluidas | todas
-  const condicaoFeito = status === 'concluidas' ? 'lembretes.feito = 1' : status === 'todas' ? '1=1' : 'lembretes.feito = 0';
+  let condicaoFeito = status === 'concluidas' ? 'lembretes.feito = 1' : status === 'todas' ? '1=1' : 'lembretes.feito = 0';
+  if (status === 'concluidas') {
+    // só as últimas 24h — senão a lista de concluídas só cresce e polui a tela
+    condicaoFeito += ` AND lembretes.concluido_em >= datetime('now', '-1 day')`;
+  }
   const ordem = status === 'concluidas' ? 'lembretes.quando DESC' : 'lembretes.quando ASC';
 
   let lembretes;
@@ -806,7 +854,7 @@ app.get('/api/lembretes', requireAuth, (req, res) => {
 });
 
 app.post('/api/lembretes/:id/concluir', requireAuth, (req, res) => {
-  db.prepare('UPDATE lembretes SET feito = 1 WHERE id = ?').run(req.params.id);
+  db.prepare(`UPDATE lembretes SET feito = 1, concluido_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?`).run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -1098,22 +1146,39 @@ app.get('/api/relatorio/progresso', requireAuth, (req, res) => {
   const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
   if (setorAtivo.erro) return res.status(403).json(setorAtivo);
 
-  const periodo = req.query.periodo || 'semana'; // semana | mes | 3meses
   const granularidade = req.query.granularidade || 'diario'; // diario | semanal | mensal
-  const dias = { semana: 7, mes: 30, '3meses': 90 }[periodo] || 7;
+  const gestor = ehGestor(req.usuario);
 
-  // Vendedor só acompanha o próprio progresso; gestor vê o setor inteiro.
-  const escopoPessoal = !ehGestor(req.usuario);
-  const desdeAtual = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
-  const desdeAnterior = new Date(Date.now() - dias * 2 * 24 * 60 * 60 * 1000).toISOString();
+  // Período: OU um preset (semana/mes/3meses), OU datas específicas
+  // escolhidas na tela (data_inicio/data_fim, formato YYYY-MM-DD) — o
+  // seletor de calendário no admin manda essas duas em vez do preset.
+  let desdeAtual, desdeAnterior, dias;
+  if (req.query.data_inicio && req.query.data_fim) {
+    const inicio = new Date(req.query.data_inicio + 'T00:00:00Z');
+    const fim = new Date(req.query.data_fim + 'T23:59:59Z');
+    dias = Math.max(1, Math.round((fim - inicio) / (24 * 60 * 60 * 1000)));
+    desdeAtual = inicio.toISOString();
+    desdeAnterior = new Date(inicio.getTime() - dias * 24 * 60 * 60 * 1000).toISOString();
+    var ateAtual = fim.toISOString();
+  } else {
+    const periodo = req.query.periodo || 'semana';
+    dias = { semana: 7, mes: 30, '3meses': 90 }[periodo] || 7;
+    desdeAtual = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+    desdeAnterior = new Date(Date.now() - dias * 2 * 24 * 60 * 60 * 1000).toISOString();
+    var ateAtual = new Date().toISOString();
+  }
 
-  const vendas = escopoPessoal
+  // Vendedor só acompanha o próprio progresso. Gestor vê o setor inteiro
+  // por padrão, mas pode escolher um vendedor específico pra isolar.
+  const vendedorFiltro = gestor && req.query.vendedor_id ? Number(req.query.vendedor_id) : (!gestor ? req.usuario.id : null);
+
+  const vendas = vendedorFiltro
     ? db.prepare(`SELECT convertido_em, valor_venda FROM leads WHERE resultado = 'convertido' AND setor_id = ? AND vendedor_id = ? AND convertido_em >= ?`)
-        .all(setorAtivo.id, req.usuario.id, desdeAnterior)
+        .all(setorAtivo.id, vendedorFiltro, desdeAnterior)
     : db.prepare(`SELECT convertido_em, valor_venda FROM leads WHERE resultado = 'convertido' AND setor_id = ? AND convertido_em >= ?`)
         .all(setorAtivo.id, desdeAnterior);
 
-  const atual = vendas.filter((v) => v.convertido_em >= desdeAtual);
+  const atual = vendas.filter((v) => v.convertido_em >= desdeAtual && v.convertido_em <= ateAtual);
   const anterior = vendas.filter((v) => v.convertido_em < desdeAtual);
 
   const total = atual.length;

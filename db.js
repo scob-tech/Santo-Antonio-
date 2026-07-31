@@ -149,6 +149,12 @@ if (!colunaExiste('leads', 'motivo_perda')) {
 if (!colunaExiste('lembretes', 'tipo')) {
   db.exec(`ALTER TABLE lembretes ADD COLUMN tipo TEXT NOT NULL DEFAULT 'outro'`);
 }
+// Quando o lembrete foi marcado como concluído — usado pra só mostrar as
+// concluídas das últimas 24h na Agenda (sem isso, a lista de concluídas
+// só cresceria pra sempre e ia poluir a tela).
+if (!colunaExiste('lembretes', 'concluido_em')) {
+  db.exec(`ALTER TABLE lembretes ADD COLUMN concluido_em TEXT`);
+}
 // mídia recebida (imagem, áudio, vídeo, documento, sticker) — guardamos a URL
 // e o tipo pra poder exibir direto no chat, sem precisar abrir o WhatsApp
 if (!colunaExiste('mensagens', 'midia_url')) {
