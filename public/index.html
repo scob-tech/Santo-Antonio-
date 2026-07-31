@@ -653,6 +653,16 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 .greeting h1 { font-family: 'Oswald', sans-serif; font-size: 26px; margin: 0 0 6px; color: var(--navy); text-transform: uppercase; }
 .greeting p { margin: 0; color: var(--muted); font-size: 14px; }
 .admin-actions { display: flex; gap: 10px; margin-top: 14px; }
+.meta-card { flex-shrink: 0; width: 300px; align-self: flex-start; }
+.meta-numeros { font-family: 'Oswald', sans-serif; font-size: 30px; color: var(--navy); margin: 4px 0 10px; }
+.meta-barra-track { background: var(--bg); border-radius: 8px; height: 10px; overflow: hidden; }
+.meta-barra-fill { background: var(--navy); height: 100%; border-radius: 8px; transition: width .4s ease; }
+.meta-barra-fill.meta-batida { background: var(--green); }
+.meta-status { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+@media (max-width: 900px) {
+  .hero-row { flex-direction: column; }
+  .meta-card { width: 100%; }
+}
 
 .btn-primary, .btn-ghost {
   border-radius: 8px; font-family: 'Inter', sans-serif; font-weight: 700; cursor: pointer; border: none;
@@ -856,7 +866,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 
       <main class="page">
         <div class="view" id="view-inicio">
-          <section class="hero-row hero-row--single">
+          <section class="hero-row hero-row--single" id="hero-row">
             <div class="greeting">
               <h1 id="painel-titulo">Painel</h1>
               <p id="painel-subtitulo">Visão geral de todos os atendimentos.</p>
@@ -864,6 +874,12 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
                 <button class="btn-primary btn-small" id="btn-relatorio" onclick="abrirRelatorio()" style="display:none;">📊 Relatório Diário</button>
                 <button class="btn-ghost btn-small" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Gerar Análise</button>
               </div>
+            </div>
+            <div class="card meta-card" id="meta-card" style="display:none;">
+              <span class="card-eyebrow" id="meta-titulo">META DA SEMANA</span>
+              <div class="meta-numeros" id="meta-numeros">0 / 0</div>
+              <div class="meta-barra-track"><div class="meta-barra-fill" id="meta-barra-fill" style="width:0%;"></div></div>
+              <div class="meta-status" id="meta-status"></div>
             </div>
           </section>
 
@@ -1019,6 +1035,29 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
             </div>
 
             <div class="card config-card" id="config-cadastros"></div>
+
+            <div class="card config-card" id="config-metas" style="display:none;">
+              <h3>Metas</h3>
+              <p>Defina a meta de cada vendedor.</p>
+              <select id="metas-vendedor" onchange="carregarMetaParaEdicao()" style="margin-bottom:8px; width:100%; padding:8px 9px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px;">
+                <option value="">Selecione um vendedor...</option>
+              </select>
+              <select id="metas-tipo" style="margin-bottom:8px; width:100%; padding:8px 9px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px;">
+                <option value="pedidos">Número de pedidos concluídos</option>
+                <option value="valor">Valor total em vendas (R$)</option>
+                <option value="atendimentos">Número de atendimentos finalizados</option>
+              </select>
+              <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <input type="number" id="metas-valor" placeholder="Valor da meta" min="0" step="0.01" style="flex:1; padding:8px 9px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px;" />
+                <select id="metas-periodo" style="padding:8px 9px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px;">
+                  <option value="semana">Por semana</option>
+                  <option value="mes">Por mês</option>
+                </select>
+              </div>
+              <div class="msg" id="metas-msg"></div>
+              <button class="btn-primary btn-small" style="width:100%;" onclick="salvarMeta()">Salvar meta</button>
+              <button class="link-mini" id="metas-remover-btn" onclick="removerMeta()" style="display:none; margin-top:8px; color:var(--red);">Remover meta desse vendedor</button>
+            </div>
           </div>
 
           <div id="painel-vendedores" style="display:none; margin-top:22px;">

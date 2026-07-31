@@ -80,6 +80,7 @@ async function checarSessao() {
   renderizarUserBox();
   renderizarSeletorSetor();
   atualizarPainelTitulo();
+  carregarMinhaMeta();
   return true;
 }
 
@@ -155,6 +156,7 @@ function mudarSetor(slug) {
   localStorage.setItem('setorAtivo', slug);
   renderizarSeletorSetor();
   atualizarPainelTitulo();
+  carregarMinhaMeta();
   mostrarTodasEncerradas = false; // volta ao padrão ao trocar de setor
   carregarLeads();
   carregarConversasAtivas();
@@ -302,11 +304,11 @@ function renderizarUserBox() {
   `;
   renderizarConfiguracoes();
 
-  renderizarConfiguracoes();
-
   const btnCadastro = document.getElementById('btn-toggle-cadastro');
   if (usuarioAtual.role === 'admin') {
     document.getElementById('painel-vendedores').style.display = 'block';
+    document.getElementById('config-metas').style.display = 'block';
+    popularSelectVendedoresMetas();
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
@@ -382,6 +384,124 @@ async function salvarSenhaConfig() {
     msgEl.textContent = data.erro || 'Erro ao trocar a senha';
     msgEl.className = 'msg erro';
   }
+}
+
+// ---------------- Metas (admin define, vendedor acompanha) ----------------
+async function popularSelectVendedoresMetas() {
+  const select = document.getElementById('metas-vendedor');
+  if (select.dataset.carregado === setorAtivo) return;
+  const res = await fetch(`${API}/api/vendedores`);
+  if (!res.ok) return;
+  const vendedores = await res.json();
+  const doSetor = vendedores.filter((v) => v.role !== 'admin' && (v.setores || []).includes(setorAtivo));
+  select.innerHTML = '<option value="">Selecione um vendedor...</option>' +
+    doSetor.map((v) => `<option value="${v.id}">${escapeHtml(v.nome)}</option>`).join('');
+  select.dataset.carregado = setorAtivo;
+  document.getElementById('config-metas').style.display = doSetor.length > 0 ? 'block' : 'none';
+}
+
+async function carregarMetaParaEdicao() {
+  const vendedorId = document.getElementById('metas-vendedor').value;
+  const removerBtn = document.getElementById('metas-remover-btn');
+  document.getElementById('metas-msg').textContent = '';
+  if (!vendedorId) {
+    document.getElementById('metas-valor').value = '';
+    removerBtn.style.display = 'none';
+    return;
+  }
+  const res = await fetch(`${API}/api/metas/${vendedorId}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  if (data.meta) {
+    document.getElementById('metas-tipo').value = data.meta.tipo;
+    document.getElementById('metas-valor').value = data.meta.valor_meta;
+    document.getElementById('metas-periodo').value = data.meta.periodo;
+    removerBtn.style.display = 'inline-block';
+  } else {
+    document.getElementById('metas-valor').value = '';
+    removerBtn.style.display = 'none';
+  }
+}
+
+async function salvarMeta() {
+  const vendedorId = document.getElementById('metas-vendedor').value;
+  const msgEl = document.getElementById('metas-msg');
+  msgEl.className = 'msg';
+  if (!vendedorId) {
+    msgEl.textContent = 'Escolha um vendedor primeiro.';
+    msgEl.className = 'msg erro';
+    return;
+  }
+  const tipo = document.getElementById('metas-tipo').value;
+  const valor_meta = document.getElementById('metas-valor').value;
+  const periodo = document.getElementById('metas-periodo').value;
+
+  const res = await fetch(`${API}/api/metas/${vendedorId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo, valor_meta, periodo }),
+  });
+  const data = await res.json();
+  if (res.ok) {
+    msgEl.textContent = 'Meta salva.';
+    msgEl.className = 'msg ok';
+    document.getElementById('metas-remover-btn').style.display = 'inline-block';
+  } else {
+    msgEl.textContent = data.erro || 'Erro ao salvar meta';
+    msgEl.className = 'msg erro';
+  }
+}
+
+async function removerMeta() {
+  const vendedorId = document.getElementById('metas-vendedor').value;
+  if (!vendedorId) return;
+  await fetch(`${API}/api/metas/${vendedorId}`, { method: 'DELETE' });
+  document.getElementById('metas-valor').value = '';
+  document.getElementById('metas-remover-btn').style.display = 'none';
+  document.getElementById('metas-msg').textContent = 'Meta removida.';
+  document.getElementById('metas-msg').className = 'msg ok';
+}
+
+const LABELS_TIPO_META = {
+  valor: { titulo: 'META DE VENDAS', formatar: (n) => `R$ ${Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}` },
+  pedidos: { titulo: 'META DE PEDIDOS', formatar: (n) => `${n}` },
+  atendimentos: { titulo: 'META DE ATENDIMENTOS', formatar: (n) => `${n}` },
+};
+
+// Painel de meta no Início do vendedor — some inteiro se ele não tem
+// meta ativa, ou se for admin/supervisor (gestor não tem meta pessoal).
+async function carregarMinhaMeta() {
+  const card = document.getElementById('meta-card');
+  const heroRow = document.getElementById('hero-row');
+  if (!card || !usuarioAtual) return;
+
+  if (ehGestor(usuarioAtual)) {
+    card.style.display = 'none';
+    heroRow.className = 'hero-row hero-row--single';
+    return;
+  }
+
+  const res = await fetch(`${API}/api/metas/${usuarioAtual.id}`);
+  if (!res.ok) return;
+  const data = await res.json();
+
+  if (!data.meta) {
+    card.style.display = 'none';
+    heroRow.className = 'hero-row hero-row--single';
+    return;
+  }
+
+  const cfg = LABELS_TIPO_META[data.meta.tipo];
+  card.style.display = 'block';
+  heroRow.className = 'hero-row';
+  document.getElementById('meta-titulo').textContent = `META DA ${data.meta.periodo === 'mes' ? 'MÊS' : 'SEMANA'}`;
+  document.getElementById('meta-numeros').textContent = `${cfg.formatar(data.atual)} / ${cfg.formatar(data.meta.valor_meta)}`;
+  const fill = document.getElementById('meta-barra-fill');
+  fill.style.width = `${data.percentual}%`;
+  fill.classList.toggle('meta-batida', data.percentual >= 100);
+  document.getElementById('meta-status').textContent = data.percentual >= 100
+    ? '🎉 Meta batida! Parabéns!'
+    : `${data.percentual}% da meta`;
 }
 
 // Abre/fecha o menu do usuário (chip no topo). Fecha sozinho se a pessoa
@@ -1472,6 +1592,7 @@ async function atualizarTudo() {
   await carregarLeads();
   await carregarConversasAtivas();
   await carregarLembretes();
+  await carregarMinhaMeta();
   if (abaAgendaAtual !== 'pendentes') await atualizarContadorPendentesAgenda();
   await atualizarConversaAberta();
 }
