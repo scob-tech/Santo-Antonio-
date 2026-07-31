@@ -100,6 +100,21 @@ async function rodarAnaliseDiaria() {
     }
   }
 
+  // 0.5) Vendas que o vendedor já confirmou na hora (encerrar → "Fechou o
+  // pedido") mas sem informar valor — a IA lê a conversa só pra estimar
+  // o valor, sem mexer no resultado (isso já foi decidido pelo humano).
+  const vendasSemValor = db.prepare(`SELECT * FROM leads WHERE resultado = 'convertido' AND valor_venda IS NULL`).all();
+  for (const lead of vendasSemValor) {
+    const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id);
+    if (mensagens.length === 0) continue;
+
+    const analise = await claudeIA.analisarConversa(mensagens);
+    if (!analise) continue;
+
+    db.prepare(`UPDATE leads SET valor_venda = ?, resumo_ia = COALESCE(resumo_ia, ?) WHERE id = ?`)
+      .run(analise.valor_sugerido || 0, analise.resumo || null, lead.id);
+  }
+
   // 1) Conversas em aberto: IA procura gargalo + oportunidade de complementar
   const leadsAbertos = db.prepare(`SELECT * FROM leads WHERE status = 'em_atendimento'`).all();
 

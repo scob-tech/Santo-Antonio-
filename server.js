@@ -272,6 +272,37 @@ app.patch('/api/vendedores/:id', requireAuth, requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+app.delete('/api/vendedores/:id', requireAuth, requireAdmin, (req, res) => {
+  const idAlvo = Number(req.params.id);
+  const vendedor = db.prepare('SELECT * FROM vendedores WHERE id = ?').get(idAlvo);
+  if (!vendedor) return res.status(404).json({ erro: 'vendedor não encontrado' });
+
+  if (idAlvo === req.usuario.id) {
+    return res.status(400).json({ erro: 'você não pode excluir a própria conta' });
+  }
+  if (vendedor.role === 'admin') {
+    const totalAdmins = db.prepare(`SELECT COUNT(*) AS n FROM vendedores WHERE role = 'admin'`).get().n;
+    if (totalAdmins <= 1) {
+      return res.status(400).json({ erro: 'esse é o único administrador — não dá pra excluir' });
+    }
+  }
+  const atendimentosAtivos = db.prepare(
+    `SELECT COUNT(*) AS n FROM leads WHERE vendedor_id = ? AND status = 'em_atendimento'`
+  ).get(idAlvo).n;
+  if (atendimentosAtivos > 0) {
+    return res.status(409).json({ erro: `esse vendedor ainda tem ${atendimentosAtivos} conversa(s) em atendimento — transfira antes de excluir` });
+  }
+
+  // Leads/lembretes antigos mantêm o vendedor_id como referência histórica
+  // (não apaga nada de conversa nem relatório) — só desliga o acesso e o
+  // cadastro em si.
+  db.prepare('DELETE FROM vendedor_setores WHERE vendedor_id = ?').run(idAlvo);
+  db.prepare('DELETE FROM metas WHERE vendedor_id = ?').run(idAlvo);
+  db.prepare('DELETE FROM vendedores WHERE id = ?').run(idAlvo);
+
+  res.json({ ok: true });
+});
+
 // ---------------------------------------------------------------
 // WEBHOOKS — dois pontos de entrada:
 //   /webhook/message  → simulado (usado pelo scripts/simulate-*.js e testes)
@@ -707,12 +738,15 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
   // fica em aberto (null) e a análise diária da IA preenche depois sozinha.
   const { fechou_pedido, valor_venda } = req.body || {};
   if (fechou_pedido === true) {
+    // valor_venda fica em aberto (NULL) de propósito — a análise diária da
+    // IA lê a conversa e estima o valor depois, sem precisar perguntar
+    // pro vendedor na hora de encerrar.
     db.prepare(`
       UPDATE leads SET status = 'encerrado', resultado = 'convertido', valor_venda = ?,
         convertido_em = strftime('%Y-%m-%d %H:%M:%f','now'),
         encerrado_em = strftime('%Y-%m-%d %H:%M:%f','now')
       WHERE id = ?
-    `).run(valor_venda || 0, req.params.id);
+    `).run(valor_venda != null ? valor_venda : null, req.params.id);
   } else if (fechou_pedido === false) {
     db.prepare(`
       UPDATE leads SET status = 'encerrado', resultado = 'perdido',
