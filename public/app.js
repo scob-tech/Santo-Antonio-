@@ -127,6 +127,26 @@ function atualizarPainelTitulo() {
     subEl.textContent = 'Vamos juntos fazer mais um dia incrível de conquistas.';
     acoesEl.style.display = 'none';
   }
+
+  // Progresso só existe pra Vendas — Financeiro e Expedição não têm meta
+  // nem comparativo de vendas, então o item some do menu pra eles.
+  const navProgresso = document.getElementById('nav-item-progresso');
+  if (navProgresso) navProgresso.style.display = setorAtivo === 'vendas' ? 'flex' : 'none';
+
+  // "Clientes" em Vendas é cadastro de cliente de verdade; em Financeiro/
+  // Expedição é só um jeito de começar uma conversa nova com alguém —
+  // por isso o nome muda.
+  const labelClientes = document.getElementById('nav-clientes-label');
+  const placeholderClientes = document.getElementById('placeholder-clientes');
+  if (labelClientes) {
+    const ehVendas = setorAtivo === 'vendas';
+    labelClientes.textContent = ehVendas ? 'Clientes' : 'Cadastrar novo contato';
+    if (placeholderClientes) {
+      placeholderClientes.innerHTML = ehVendas
+        ? '<strong>Clientes</strong>Cadastro de clientes ainda não existe nesse sistema — em construção.'
+        : '<strong>Cadastrar novo contato</strong>Em construção — por enquanto, use "+ Novo Lead" na tela de Início pra começar uma conversa nova.';
+    }
+  }
 }
 
 function mudarSetor(slug) {
@@ -167,10 +187,16 @@ function mudarView(nome) {
 
 let progressoPeriodo = 'semana';
 let progressoGranularidade = 'diario';
+let progressoPeriodoCustom = null; // { inicio, fim } ou null (usa o preset)
 
 function mudarProgresso(campo, valor) {
-  if (campo === 'periodo') progressoPeriodo = valor;
-  else progressoGranularidade = valor;
+  if (campo === 'periodo') {
+    progressoPeriodo = valor;
+    progressoPeriodoCustom = null; // escolher um preset cancela o período customizado
+    document.getElementById('progresso-periodo-custom').style.display = 'none';
+  } else {
+    progressoGranularidade = valor;
+  }
   const containerId = campo === 'periodo' ? 'progresso-periodo' : 'progresso-granularidade';
   document.querySelectorAll(`#${containerId} .filter-chip`).forEach((b) => {
     b.classList.toggle('is-active', b.dataset[campo] === valor);
@@ -178,9 +204,52 @@ function mudarProgresso(campo, valor) {
   carregarProgresso();
 }
 
+// Botão de calendário — abre/fecha os dois campos de data pra um período
+// específico, escolhido à mão (em vez dos presets de sempre).
+function alternarSeletorPeriodo() {
+  const box = document.getElementById('progresso-periodo-custom');
+  box.style.display = box.style.display === 'none' ? 'flex' : 'none';
+}
+function aplicarPeriodoCustom() {
+  const inicio = document.getElementById('progresso-data-inicio').value;
+  const fim = document.getElementById('progresso-data-fim').value;
+  if (!inicio || !fim) return;
+  progressoPeriodoCustom = { inicio, fim };
+  document.querySelectorAll('#progresso-periodo .filter-chip').forEach((b) => b.classList.remove('is-active'));
+  carregarProgresso();
+}
+
+// Só gestor (admin/supervisor) vê esse filtro — vendedor comum só
+// acompanha o próprio progresso mesmo, não precisa escolher ninguém.
+async function popularFiltroVendedorProgresso() {
+  const wrap = document.getElementById('progresso-filtro-vendedor-wrap');
+  if (!ehGestor(usuarioAtual)) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  const select = document.getElementById('progresso-filtro-vendedor');
+  if (select.dataset.carregado === setorAtivo) return; // já carregou pra esse setor
+  const res = await fetch(`${API}/api/vendedores`);
+  if (!res.ok) return;
+  const vendedores = await res.json();
+  const doSetor = vendedores.filter((v) => v.role === 'admin' || (v.setores || []).includes(setorAtivo));
+  select.innerHTML = '<option value="">Todo o setor (todos os vendedores)</option>' +
+    doSetor.filter((v) => v.role !== 'admin').map((v) => `<option value="${v.id}">${escapeHtml(v.nome)}</option>`).join('');
+  select.dataset.carregado = setorAtivo;
+}
+
 async function carregarProgresso() {
   if (!setorAtivo) return;
-  const res = await fetch(`${API}/api/relatorio/progresso?periodo=${progressoPeriodo}&granularidade=${progressoGranularidade}&setor=${setorAtivo}`);
+  if (ehGestor(usuarioAtual)) await popularFiltroVendedorProgresso();
+
+  let url = `${API}/api/relatorio/progresso?granularidade=${progressoGranularidade}&setor=${setorAtivo}`;
+  url += progressoPeriodoCustom
+    ? `&data_inicio=${progressoPeriodoCustom.inicio}&data_fim=${progressoPeriodoCustom.fim}`
+    : `&periodo=${progressoPeriodo}`;
+  const vendedorSelect = document.getElementById('progresso-filtro-vendedor');
+  if (ehGestor(usuarioAtual) && vendedorSelect && vendedorSelect.value) {
+    url += `&vendedor_id=${vendedorSelect.value}`;
+  }
+
+  const res = await fetch(url);
   if (res.status === 401) return window.location.href = '/login.html';
   if (!res.ok) return;
   const dados = await res.json();
@@ -488,10 +557,20 @@ async function carregarLeads() {
     return;
   }
 
+  // Limite de 5 conversas simultâneas por vendedor, só em Vendas — depois
+  // de bater o limite, os leads novos ficam cinza (ainda visíveis, mas
+  // sem poder abrir) até o vendedor fechar alguma conversa.
+  const noLimite = setorAtivo === 'vendas' && !ehGestor(usuarioAtual)
+    && conversasAtivasCache.filter((l) => l.vendedor_id === usuarioAtual.id).length >= 5;
+
+  const avisoLimite = noLimite
+    ? `<li class="empty-state" style="background:var(--orange-bg); color:var(--text); border-radius:8px; margin-bottom:8px;">⚠️ Você está com 5 conversas ativas — feche alguma antes de pegar um novo lead.</li>`
+    : '';
+
   // Ordenados por quem chegou primeiro
   const ordenados = [...leads].sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
 
-  el.innerHTML = ordenados.map(l => {
+  el.innerHTML = avisoLimite + ordenados.map(l => {
     const nome = l.nome_cliente || l.telefone;
 
     // Tempo de espera — destaca com ⚠️ se passou de 5 min sem ser puxado
@@ -508,7 +587,7 @@ async function carregarLeads() {
     const tagsHtml = tags.length ? `<div class="lead-tags">${tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : '';
 
     return `
-      <li class="lead-item" onclick="abrirConversa(${l.id})">
+      <li class="lead-item ${noLimite ? 'lead-item--bloqueado' : ''}" onclick="${noLimite ? '' : `abrirConversa(${l.id})`}">
         <div class="lead-avatar">${escapeHtml(iniciais(nome))}</div>
         <div class="lead-main">
           <div class="lead-top">
@@ -827,17 +906,52 @@ function usarSugestaoTarefa(sugestao) {
 
 // Encerrar agora é 1 clique só — a IA lê a conversa na análise diária e
 // decide sozinha se converteu/perdeu, sem perguntar nada aqui.
-async function encerrarLeadDaConversa() {
-  if (!leadConversaAtual) return;
-  if (!confirm(`Encerrar o atendimento de ${leadConversaAtual.nome_cliente || leadConversaAtual.telefone}?`)) return;
+let resultadoEscolhidoEncerrar = null; // true = fechou, false = não fechou, null = não informado
 
-  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/encerrar`, { method: 'POST' });
+function encerrarLeadDaConversa() {
+  if (!leadConversaAtual) return;
+  resultadoEscolhidoEncerrar = null;
+  document.getElementById('enc-campo-valor').style.display = 'none';
+  document.getElementById('enc-valor').value = '';
+  document.getElementById('enc-erro').textContent = '';
+  document.getElementById('enc-btn-confirmar').style.display = 'none';
+  document.getElementById('enc-btn-pular').style.display = 'inline-block';
+  abrirModal('modal-encerrar');
+}
+
+function escolherResultadoEncerrar(fechou) {
+  resultadoEscolhidoEncerrar = fechou;
+  document.getElementById('enc-campo-valor').style.display = fechou ? 'block' : 'none';
+  document.getElementById('enc-btn-confirmar').style.display = 'inline-block';
+  document.getElementById('enc-btn-pular').style.display = 'none';
+}
+
+async function confirmarEncerrar() {
+  if (!leadConversaAtual) return;
+  const erroEl = document.getElementById('enc-erro');
+  erroEl.textContent = '';
+
+  const body = {};
+  if (resultadoEscolhidoEncerrar === true) {
+    const valor = parseFloat(document.getElementById('enc-valor').value);
+    body.fechou_pedido = true;
+    body.valor_venda = isNaN(valor) ? 0 : valor;
+  } else if (resultadoEscolhidoEncerrar === false) {
+    body.fechou_pedido = false;
+  }
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/encerrar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) {
     const err = await res.json();
-    alert(err.erro || 'Erro ao encerrar');
+    erroEl.textContent = err.erro || 'Erro ao encerrar';
     return;
   }
 
+  fecharModal('modal-encerrar');
   fecharModal('modal-conversa');
   atualizarTudo();
 }
@@ -998,6 +1112,41 @@ function formatarHoraConversa(dataStr) {
   return data.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
 
+// Prioridade visual: não lida primeiro, depois por atividade mais recente.
+function ordenarConversasPorAtividade(lista) {
+  return [...lista].sort((a, b) => {
+    const grupo = (l) => (l.nao_lidas || 0) > 0 ? 0 : 1;
+    const grupoA = grupo(a);
+    const grupoB = grupo(b);
+    if (grupoA !== grupoB) return grupoA - grupoB;
+    const ta = a.ultima_mensagem ? new Date(a.ultima_mensagem.criado_em) : new Date(a.criado_em);
+    const tb = b.ultima_mensagem ? new Date(b.ultima_mensagem.criado_em) : new Date(b.criado_em);
+    return tb - ta;
+  });
+}
+
+function renderizarItemConversa(l) {
+  const nome = l.nome_cliente || l.telefone;
+  const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
+  const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="setor-tag">${escapeHtml(l.vendedor_nome)}</span>` : '';
+  const naoLidas = l.nao_lidas || 0;
+  const semResposta = precisaResposta(l);
+  const hora = l.ultima_mensagem ? formatarHoraConversa(l.ultima_mensagem.criado_em) : '';
+  let ladoDireito = `<span class="conv-time">${hora}</span>`;
+  if (naoLidas > 0) ladoDireito += `<span class="conv-unread-badge">${naoLidas > 9 ? '9+' : naoLidas}</span>`;
+  else if (semResposta) ladoDireito += `<span class="conv-waiting-label">Aguardando resposta</span>`;
+  return `
+    <li class="conv-item ${naoLidas > 0 ? 'conv-item--nao-lida' : ''} ${semResposta ? 'conv-item--aguardando' : ''}" onclick="abrirConversa(${l.id})">
+      <div class="conv-avatar" style="background:${corAvatar(l.id)};">${escapeHtml(iniciais(nome))}</div>
+      <div class="conv-main">
+        <div class="conv-name">${escapeHtml(nome)} ${tagVendedor}</div>
+        <p class="conv-preview">${escapeHtml(preview)}</p>
+      </div>
+      <div class="conv-side">${ladoDireito}</div>
+    </li>
+  `;
+}
+
 async function carregarConversasAtivas(termoBusca) {
   if (!setorAtivo) return;
   let leads;
@@ -1014,57 +1163,51 @@ async function carregarConversasAtivas(termoBusca) {
 
   conversasAtivasCache = leads.filter(l => l.status !== 'encerrado');
 
-  // Ordem: não lida primeiro (precisa de atenção agora), depois por
-  // atividade mais recente.
-  const ordenarPorAtividade = (lista) => [...lista].sort((a, b) => {
-    const grupo = (l) => (l.nao_lidas || 0) > 0 ? 0 : 1;
-    const grupoA = grupo(a);
-    const grupoB = grupo(b);
-    if (grupoA !== grupoB) return grupoA - grupoB;
-    const ta = a.ultima_mensagem ? new Date(a.ultima_mensagem.criado_em) : new Date(a.criado_em);
-    const tb = b.ultima_mensagem ? new Date(b.ultima_mensagem.criado_em) : new Date(b.criado_em);
-    return tb - ta;
-  });
-
-  const renderizarItem = (l) => {
-    const nome = l.nome_cliente || l.telefone;
-    const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
-    const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="setor-tag">${escapeHtml(l.vendedor_nome)}</span>` : '';
-    const naoLidas = l.nao_lidas || 0;
-    const semResposta = precisaResposta(l);
-    const hora = l.ultima_mensagem ? formatarHoraConversa(l.ultima_mensagem.criado_em) : '';
-    let ladoDireito = `<span class="conv-time">${hora}</span>`;
-    if (naoLidas > 0) ladoDireito += `<span class="conv-unread-badge">${naoLidas > 9 ? '9+' : naoLidas}</span>`;
-    else if (semResposta) ladoDireito += `<span class="conv-waiting-label">Aguardando resposta</span>`;
-    return `
-      <li class="conv-item ${naoLidas > 0 ? 'conv-item--nao-lida' : ''} ${semResposta ? 'conv-item--aguardando' : ''}" onclick="abrirConversa(${l.id})">
-        <div class="conv-avatar" style="background:${corAvatar(l.id)};">${escapeHtml(iniciais(nome))}</div>
-        <div class="conv-main">
-          <div class="conv-name">${escapeHtml(nome)} ${tagVendedor}</div>
-          <p class="conv-preview">${escapeHtml(preview)}</p>
-        </div>
-        <div class="conv-side">${ladoDireito}</div>
-      </li>
-    `;
-  };
-
   // --- Card "Conversas em Andamento" (Início): só em_atendimento ---
-  const ativas = ordenarPorAtividade(leads.filter((l) => l.status !== 'encerrado'));
+  const ativas = ordenarConversasPorAtividade(leads.filter((l) => l.status !== 'encerrado'));
   const elAtivas = document.getElementById('conversas-ativas');
   const contagemEl = document.getElementById('conv-count');
   if (contagemEl) contagemEl.textContent = ativas.length;
   elAtivas.innerHTML = ativas.length > 0
-    ? ativas.map(renderizarItem).join('')
+    ? ativas.map(renderizarItemConversa).join('')
     : `<li class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa ativa no momento.'}</li>`;
 
-  // --- Aba "Histórico": só encerrado ---
+  // --- Aba "Histórico": só encerrado (a não ser que a busca do Histórico
+  // esteja em uso — nesse caso quem manda é filtrarHistorico, não aqui) ---
+  const buscaHistoricoEl = document.getElementById('busca-historico');
+  if (buscaHistoricoEl && buscaHistoricoEl.value.trim().length >= 2) return;
   const elHistorico = document.getElementById('historico-lista');
   if (elHistorico) {
-    const encerradas = ordenarPorAtividade(leads.filter((l) => l.status === 'encerrado'));
+    const encerradas = ordenarConversasPorAtividade(leads.filter((l) => l.status === 'encerrado'));
     elHistorico.innerHTML = encerradas.length > 0
-      ? encerradas.map(renderizarItem).join('')
+      ? encerradas.map(renderizarItemConversa).join('')
       : `<li class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa encerrada ainda.</li>`;
   }
+}
+
+// Busca dedicada da aba Histórico — não mexe no card de "Conversas em
+// Andamento" do Início, só na lista de encerradas.
+let buscaHistoricoTimeout = null;
+function filtrarHistorico(termo) {
+  clearTimeout(buscaHistoricoTimeout);
+  buscaHistoricoTimeout = setTimeout(() => carregarHistorico(termo.trim()), 300);
+}
+async function carregarHistorico(termoBusca) {
+  if (!setorAtivo) return;
+  const elHistorico = document.getElementById('historico-lista');
+  if (!elHistorico) return;
+
+  if (!termoBusca || termoBusca.length < 2) {
+    return carregarConversasAtivas(); // sem termo de busca, volta ao normal
+  }
+
+  const res = await fetch(`${API}/api/leads/buscar?q=${encodeURIComponent(termoBusca)}&setor=${setorAtivo}`);
+  if (res.status === 401) return window.location.href = '/login.html';
+  const leads = await res.json();
+  const encerradas = ordenarConversasPorAtividade(leads.filter((l) => l.status === 'encerrado'));
+  elHistorico.innerHTML = encerradas.length > 0
+    ? encerradas.map(renderizarItemConversa).join('')
+    : `<li class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa encerrada encontrada.</li>`;
 }
 
 // Cor consistente por conversa (mesmo lead sempre com a mesma cor de

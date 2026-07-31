@@ -476,8 +476,8 @@
   box-shadow: 10px 0 30px rgba(31,36,48,.14);
 }
 .sidebar-brand { display: flex; align-items: center; padding: 6px 4px 22px; min-height: 56px; }
-.brand-icon { height: 40px; width: auto; flex-shrink: 0; }
-.brand-full { height: 56px; width: auto; margin-left: 6px; opacity: 0; display: none; transition: opacity .12s ease; }
+.brand-icon { width: 54px; height: auto; flex-shrink: 0; }
+.brand-full { width: 188px; height: auto; margin-left: 0; opacity: 0; display: none; transition: opacity .12s ease; }
 .sidebar.is-expanded .brand-icon { display: none; }
 .sidebar.is-expanded .brand-full { display: block; opacity: 1; }
 
@@ -607,13 +607,14 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 @media (max-width: 768px) {
   .hamburger-btn {
     display: flex; align-items: center; justify-content: center;
-    width: 36px; height: 36px; border-radius: 8px; border: none; background: var(--bg);
+    width: 38px; height: 38px; border-radius: 8px; border: none; background: var(--bg);
     color: var(--navy); cursor: pointer; flex-shrink: 0; margin-right: 4px;
+    font-size: 20px; line-height: 1; padding: 0;
   }
   .sidebar-close-btn {
     display: flex; align-items: center; justify-content: center; margin-left: auto;
     width: 30px; height: 30px; border-radius: 50%; border: none; background: var(--bg);
-    color: var(--muted); cursor: pointer; font-size: 13px; flex-shrink: 0;
+    color: var(--muted); cursor: pointer; font-size: 13px; flex-shrink: 0; padding: 0; line-height: 1;
   }
   .sidebar {
     position: fixed; left: 0; top: 0; height: 100vh; width: 240px;
@@ -624,7 +625,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   .sidebar.mobile-aberta { transform: translateX(0); box-shadow: 10px 0 30px rgba(18,23,43,.3); }
   .sidebar-brand { padding: 4px 4px 20px; }
   .brand-icon { display: none; }
-  .brand-full { display: block !important; opacity: 1; height: 44px; }
+  .brand-full { display: block !important; opacity: 1; width: 170px; height: auto; }
   .sidebar-nav { flex-direction: column; flex: 1; margin-top: 4px; }
   .side-item span { opacity: 1; }
   .side-divider { display: block; }
@@ -688,6 +689,8 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 .lead-tags { display: flex; gap: 6px; margin: 4px 0 5px; flex-wrap: wrap; }
 .lead-tags .tag { background: var(--bg); color: var(--muted); font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
 .lead-preview { margin: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lead-item--bloqueado { opacity: .45; cursor: not-allowed; filter: grayscale(60%); }
+.lead-item--bloqueado:hover { background: none; }
 
 .conv-item { display: flex; gap: 12px; align-items: center; padding: 11px 4px; border-top: 1px solid var(--border); cursor: pointer; }
 .conv-item:first-child { border-top: none; }
@@ -766,7 +769,8 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 .modal-close-corner {
   position: absolute; top: 14px; right: 14px; z-index: 5;
   border: none; background: var(--bg); width: 30px; height: 30px; border-radius: 50%;
-  cursor: pointer; color: var(--muted); font-size: 13px;
+  cursor: pointer; color: var(--muted); font-size: 14px; padding: 0;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
 }
 .modal-close-corner:hover { background: var(--border); }
 .conversa-modal-header {
@@ -787,10 +791,11 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   font-size: 14px; font-family: 'Inter', sans-serif; background: var(--card); color: var(--text);
 }
 .icon-btn {
-  border: none; background: var(--bg); width: 38px; height: 38px; border-radius: 50%;
-  font-size: 16px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: var(--card); width: 40px; height: 40px; border-radius: 50%;
+  font-size: 18px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--navy);
 }
-.icon-btn:hover { background: var(--navy-bg); }
+.icon-btn:hover { background: var(--navy-bg); border-color: var(--navy); }
 
 @media (max-width: 700px) {
   .conversa-modal-box { max-width: 100%; max-height: 100%; height: 100%; border-radius: 0; }
@@ -821,13 +826,13 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
         </button>
         <button class="side-item" data-view="clientes" onclick="mudarView('clientes')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6M15.5 8.2a3 3 0 1 1 3.8 2.9M20 20c0-2.7-1.7-4.8-4-5.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          <span>Clientes</span>
+          <span id="nav-clientes-label">Clientes</span>
         </button>
         <button class="side-item" data-view="historico" onclick="mudarView('historico')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           <span>Histórico</span>
         </button>
-        <button class="side-item" data-view="progresso" onclick="mudarView('progresso')">
+        <button class="side-item" data-view="progresso" onclick="mudarView('progresso')" id="nav-item-progresso">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 20V10M11 20V4M18 20v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           <span>Progresso</span>
         </button>
@@ -844,9 +849,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 
     <div class="main-col">
       <header class="topbar-slim">
-        <button class="hamburger-btn" id="hamburger-btn" onclick="abrirMenuMobile()" aria-label="Abrir menu">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        </button>
+        <button class="hamburger-btn" id="hamburger-btn" onclick="abrirMenuMobile()" aria-label="Abrir menu">☰</button>
         <h2 class="view-title" id="view-title">Início</h2>
         <div class="user-box" id="user-box"></div>
       </header>
@@ -907,7 +910,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
         </div>
 
         <div class="view" id="view-clientes" hidden>
-          <div class="placeholder-view"><strong>Clientes</strong>Cadastro de clientes ainda não existe nesse sistema — em construção.</div>
+          <div class="placeholder-view" id="placeholder-clientes"><strong>Clientes</strong>Cadastro de clientes ainda não existe nesse sistema — em construção.</div>
         </div>
 
         <div class="view" id="view-historico" hidden>
@@ -917,6 +920,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
               <p>Conversas encerradas.</p>
             </div>
           </section>
+          <input type="text" id="busca-historico" placeholder="🔍 Buscar por nome ou telefone..." style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; margin-bottom:14px; box-sizing:border-box;" oninput="filtrarHistorico(this.value)" />
           <div class="card list-card">
             <ul class="conv-list" id="historico-lista"></ul>
           </div>
@@ -930,11 +934,27 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
             </div>
           </section>
 
-          <div style="margin-bottom:6px; font-size:12px; font-weight:700; color:var(--muted);">Período</div>
+          <div id="progresso-filtro-vendedor-wrap" style="display:none; margin-bottom:14px;">
+            <div style="margin-bottom:6px; font-size:12px; font-weight:700; color:var(--muted);">Vendedor</div>
+            <select id="progresso-filtro-vendedor" onchange="carregarProgresso()" style="padding:8px 10px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; min-width:220px;">
+              <option value="">Todo o setor (todos os vendedores)</option>
+            </select>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+            <span style="font-size:12px; font-weight:700; color:var(--muted);">Período</span>
+            <button class="icon-btn" style="width:28px; height:28px; font-size:13px;" title="Selecionar período específico" onclick="alternarSeletorPeriodo()">📅</button>
+          </div>
           <div class="filter-chips" id="progresso-periodo">
             <button class="filter-chip is-active" data-periodo="semana" onclick="mudarProgresso('periodo','semana')">Última semana</button>
             <button class="filter-chip" data-periodo="mes" onclick="mudarProgresso('periodo','mes')">Último mês</button>
             <button class="filter-chip" data-periodo="3meses" onclick="mudarProgresso('periodo','3meses')">Últimos 3 meses</button>
+          </div>
+          <div id="progresso-periodo-custom" style="display:none; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+            <input type="date" id="progresso-data-inicio" style="padding:7px 9px; border-radius:6px; border:1px solid var(--border); font-size:13px;" />
+            <span style="color:var(--muted); font-size:13px;">até</span>
+            <input type="date" id="progresso-data-fim" style="padding:7px 9px; border-radius:6px; border:1px solid var(--border); font-size:13px;" />
+            <button class="btn-primary btn-small" onclick="aplicarPeriodoCustom()">Aplicar</button>
           </div>
           <div style="margin-bottom:6px; font-size:12px; font-weight:700; color:var(--muted);">Visualizar por</div>
           <div class="filter-chips" id="progresso-granularidade">
@@ -1106,42 +1126,24 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   <!-- Modal: encerrar atendimento -->
   <div class="modal-overlay" id="modal-encerrar">
     <div class="modal-box">
-      <h3>Encerrar atendimento</h3>
-      <button class="link-mini" id="btn-sugerir-encerramento" onclick="sugerirEncerramentoIA()" style="margin-bottom:4px;">🤖 Sugerir com IA (lê a conversa)</button>
-      <div class="modal-erro" id="enc-ia-status" style="display:none; color:var(--navy); margin-bottom:8px;"></div>
+      <h3>Encerrar conversa</h3>
+      <p style="font-size:13px; color:var(--muted); margin-top:-6px; margin-bottom:14px;">Esse atendimento fechou pedido?</p>
 
-      <label>Resultado</label>
-      <select id="enc-resultado" onchange="alternarCamposEncerrar()">
-        <option value="">Selecione...</option>
-        <option value="convertido">Convertido (venda fechada)</option>
-        <option value="perdido">Perdido</option>
-      </select>
-
-      <div id="enc-campo-valor" style="display:none;">
-        <label>Valor da venda (R$)</label>
-        <input type="number" id="enc-valor" min="0" step="0.01" />
+      <div class="modal-actions" style="margin-bottom:14px;">
+        <button class="cancelar" onclick="escolherResultadoEncerrar(false)" style="flex:1;">Não fechou</button>
+        <button onclick="escolherResultadoEncerrar(true)" style="flex:1;">✅ Fechou o pedido</button>
       </div>
 
-      <div id="enc-campo-motivo" style="display:none;">
-        <label>Motivo da perda</label>
-        <select id="enc-motivo">
-          <option value="preco">Preço</option>
-          <option value="prazo_frete">Prazo / frete</option>
-          <option value="concorrencia">Concorrência</option>
-          <option value="sem_retorno">Cliente não deu retorno</option>
-          <option value="forma_pagamento">Forma de pagamento</option>
-          <option value="outro">Outro</option>
-        </select>
-        <div id="enc-motivo-outro-box" style="display:none;">
-          <label>Descreva o motivo</label>
-          <input type="text" id="enc-motivo-outro" />
-        </div>
+      <div id="enc-campo-valor" style="display:none;">
+        <label>Valor do pedido (R$)</label>
+        <input type="number" id="enc-valor" min="0" step="0.01" placeholder="0,00" />
       </div>
 
       <div class="modal-erro" id="enc-erro"></div>
       <div class="modal-actions">
-        <button class="cancelar" onclick="fecharModal('modal-encerrar')">Cancelar</button>
-        <button onclick="confirmarEncerrar()">Confirmar</button>
+        <button class="cancelar" onclick="fecharModal('modal-encerrar')" style="flex:1;">Cancelar</button>
+        <button id="enc-btn-confirmar" onclick="confirmarEncerrar()" style="display:none; flex:1;">Confirmar</button>
+        <button id="enc-btn-pular" onclick="confirmarEncerrar()" style="flex:1;">Encerrar sem informar</button>
       </div>
     </div>
   </div>
