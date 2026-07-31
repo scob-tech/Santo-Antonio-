@@ -316,6 +316,10 @@
     display: none; position: fixed; inset: 0; background: rgba(31,36,48,0.5);
     align-items: center; justify-content: center; z-index: 100;
   }
+  /* Esses dois abrem POR CIMA da caixa de conversa (que já é um modal) —
+     sem isso, como vêm antes no HTML, a conversa desenhava por cima deles
+     mesmo estando "atrás" na hierarquia de ações. */
+  #modal-transferir, #modal-encerrar { z-index: 110; }
   .modal-overlay.aberto { display: flex; }
   .modal-box {
     background: white; border-radius: 10px; padding: 24px; width: 100%; max-width: 380px;
@@ -630,7 +634,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   .side-item span { opacity: 1; }
   .side-divider { display: block; }
   .seletor-setor, .sidebar-switcher { flex-direction: column; }
-  .switch-item span:last-child { opacity: 1; }
+  .switch-item span:last-child { opacity: 1 !important; }
   .main-col { margin-left: 0; }
   .topbar-slim { padding: 10px 14px; }
 
@@ -788,7 +792,13 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   padding: 14px 54px 14px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
 }
 .conversa-modal-header-user { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.conversa-modal-header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.conversa-modal-header-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.btn-subtle {
+  border: none; background: none; color: var(--muted); font-size: 12px; font-weight: 600;
+  padding: 5px 9px; border-radius: 6px; cursor: pointer; font-family: 'Inter', sans-serif;
+}
+.btn-subtle:hover { background: var(--bg); color: var(--navy); }
+.btn-subtle--encerrar:hover { color: var(--red); }
 .modal-name { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
 .conversa-modal-subtitulo { font-size: 12px; color: var(--muted); }
 .conversa-modal-mensagens {
@@ -1081,6 +1091,8 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
                 <option value="supervisor">Supervisor (vê e responde tudo, sem senha/relatório)</option>
                 <option value="admin">Administrador</option>
               </select>
+              <label>Setor(es) de acesso</label>
+              <div id="c-setores" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
               <button style="margin-top:12px; width:100%;" onclick="cadastrarVendedor()">Salvar</button>
               <div class="msg" id="cadastro-msg"></div>
             </div>
@@ -1166,23 +1178,17 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   <div class="modal-overlay" id="modal-encerrar">
     <div class="modal-box">
       <h3>Encerrar conversa</h3>
-      <p style="font-size:13px; color:var(--muted); margin-top:-6px; margin-bottom:14px;">Esse atendimento fechou pedido?</p>
+      <p style="font-size:13px; color:var(--muted); margin-top:-6px; margin-bottom:14px;">Esse atendimento fechou pedido? (valor e motivo ficam por conta da análise da IA depois)</p>
 
-      <div class="modal-actions" style="margin-bottom:14px;">
-        <button class="cancelar" onclick="escolherResultadoEncerrar(false)" style="flex:1;">Não fechou</button>
-        <button onclick="escolherResultadoEncerrar(true)" style="flex:1;">✅ Fechou o pedido</button>
-      </div>
-
-      <div id="enc-campo-valor" style="display:none;">
-        <label>Valor do pedido (R$)</label>
-        <input type="number" id="enc-valor" min="0" step="0.01" placeholder="0,00" />
+      <div class="modal-actions" style="margin-bottom:10px;">
+        <button class="cancelar" onclick="confirmarEncerrar(false)" style="flex:1;">Não fechou</button>
+        <button onclick="confirmarEncerrar(true)" style="flex:1;">✅ Fechou o pedido</button>
       </div>
 
       <div class="modal-erro" id="enc-erro"></div>
       <div class="modal-actions">
         <button class="cancelar" onclick="fecharModal('modal-encerrar')" style="flex:1;">Cancelar</button>
-        <button id="enc-btn-confirmar" onclick="confirmarEncerrar()" style="display:none; flex:1;">Confirmar</button>
-        <button id="enc-btn-pular" onclick="confirmarEncerrar()" style="flex:1;">Encerrar sem informar</button>
+        <button onclick="confirmarEncerrar(null)" style="flex:1;">Encerrar sem informar</button>
       </div>
     </div>
   </div>
@@ -1244,9 +1250,9 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
           </div>
         </div>
         <div class="conversa-modal-header-actions" id="conversa-header-acoes" style="display:none;">
-          <button class="btn-ghost btn-small" onclick="sugerirTarefaIA()">🤖 Sugerir tarefa</button>
-          <button class="btn-ghost btn-small" onclick="abrirTransferir()">Transferir</button>
-          <button class="btn-primary btn-small" onclick="encerrarLeadDaConversa()">Encerrar conversa</button>
+          <button class="btn-subtle" onclick="sugerirTarefaIA()">🤖 Sugerir tarefa</button>
+          <button class="btn-subtle" onclick="abrirTransferir()">Transferir</button>
+          <button class="btn-subtle btn-subtle--encerrar" onclick="encerrarLeadDaConversa()">Encerrar conversa</button>
         </div>
       </div>
 

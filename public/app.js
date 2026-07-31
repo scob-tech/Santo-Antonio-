@@ -296,7 +296,10 @@ function renderizarUserBox() {
       </div>
       <span class="chevron">▾</span>
       <div class="user-dropdown" id="user-dropdown" hidden>
-        <button class="user-dropdown-item" onclick="event.stopPropagation(); document.getElementById('user-dropdown').hidden = true; mudarView('configuracoes');">⚙️ Configurações</button>
+        <button class="user-dropdown-item" onclick="event.stopPropagation(); document.getElementById('user-dropdown').hidden = true; mudarView('configuracoes');" style="display:flex; align-items:center; gap:8px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.97 7.97 0 000-2l2-1.5-2-3.4-2.3.9a8 8 0 00-1.7-1L15 3h-4l-.4 2.9a8 8 0 00-1.7 1l-2.3-.9-2 3.4L6.6 11a7.97 7.97 0 000 2l-2 1.5 2 3.4 2.3-.9a8 8 0 001.7 1L11 21h4l.4-2.9a8 8 0 001.7-1l2.3.9 2-3.4-2-1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          Configurações
+        </button>
         <div class="user-dropdown-divider"></div>
         <button class="user-dropdown-item user-dropdown-item--danger" onclick="sair()">🚪 Sair</button>
       </div>
@@ -309,6 +312,7 @@ function renderizarUserBox() {
     document.getElementById('painel-vendedores').style.display = 'block';
     document.getElementById('config-metas').style.display = 'block';
     popularSelectVendedoresMetas();
+    renderizarCheckboxesSetores();
     btnCadastro.style.display = 'inline-block';
     btnCadastro.onclick = () => {
       document.getElementById('cadastro-form').classList.toggle('aberto');
@@ -611,17 +615,30 @@ async function sair() {
   window.location.href = '/login.html';
 }
 
+function renderizarCheckboxesSetores() {
+  const el = document.getElementById('c-setores');
+  if (!el || setoresDisponiveis.length === 0) return;
+  const opcoes = setoresDisponiveis.length > 0 ? setoresDisponiveis : [{ slug: 'vendas', nome: 'Vendas' }];
+  el.innerHTML = opcoes.map((s) => `
+    <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:400;">
+      <input type="checkbox" class="c-setor-check" value="${s.slug}" ${s.slug === setorAtivo ? 'checked' : ''} style="width:auto;" />
+      ${escapeHtml(s.nome)}
+    </label>
+  `).join('');
+}
+
 async function cadastrarVendedor() {
   const nome = document.getElementById('c-nome').value.trim();
   const login = document.getElementById('c-login').value.trim();
   const senha = document.getElementById('c-senha').value;
   const role = document.getElementById('c-role').value;
   const msgEl = document.getElementById('cadastro-msg');
+  const setores = [...document.querySelectorAll('.c-setor-check:checked')].map((c) => c.value);
 
   const res = await fetch(`${API}/api/vendedores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nome, login, senha, role }),
+    body: JSON.stringify({ nome, login, senha, role, setores }),
   });
   const data = await res.json();
 
@@ -649,12 +666,23 @@ async function carregarVendedores() {
     <div class="side-card">
       <div class="vendedor-name" style="display:flex; justify-content:space-between; align-items:center;">
         <span>${v.nome}${v.role === 'admin' ? ' 👑' : v.role === 'supervisor' ? ' 🛡️' : ''}</span>
-        ${ehAdmin ? `<span style="display:flex; gap:8px;"><button class="link-mini" onclick="abrirEdicaoCadastro(${v.id})">✏️</button><button class="link-mini" onclick="abrirModalSenha(${v.id}, '${v.nome.replace(/'/g, "\\'")}')">🔑</button></span>` : ''}
+        ${ehAdmin ? `<span style="display:flex; gap:8px;"><button class="link-mini" onclick="abrirEdicaoCadastro(${v.id})">✏️</button><button class="link-mini" onclick="abrirModalSenha(${v.id}, '${v.nome.replace(/'/g, "\\'")}')">🔑</button><button class="link-mini" style="color:var(--red);" onclick="excluirVendedor(${v.id}, '${v.nome.replace(/'/g, "\\'")}')">🗑️</button></span>` : ''}
       </div>
       <div class="vendedor-count">${v.leads_ativos} atendimento${v.leads_ativos === 1 ? '' : 's'} ativo${v.leads_ativos === 1 ? '' : 's'}</div>
     </div>
   `).join('');
   return vendedores;
+}
+
+async function excluirVendedor(id, nome) {
+  if (!confirm(`Excluir o cadastro de ${nome}? Isso remove o acesso dele ao sistema (o histórico de conversas dele é mantido).`)) return;
+  const res = await fetch(`${API}/api/vendedores/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao excluir');
+    return;
+  }
+  carregarVendedores();
 }
 
 async function carregarLeads() {
@@ -1026,39 +1054,21 @@ function usarSugestaoTarefa(sugestao) {
 
 // Encerrar agora é 1 clique só — a IA lê a conversa na análise diária e
 // decide sozinha se converteu/perdeu, sem perguntar nada aqui.
-let resultadoEscolhidoEncerrar = null; // true = fechou, false = não fechou, null = não informado
-
 function encerrarLeadDaConversa() {
   if (!leadConversaAtual) return;
-  resultadoEscolhidoEncerrar = null;
-  document.getElementById('enc-campo-valor').style.display = 'none';
-  document.getElementById('enc-valor').value = '';
   document.getElementById('enc-erro').textContent = '';
-  document.getElementById('enc-btn-confirmar').style.display = 'none';
-  document.getElementById('enc-btn-pular').style.display = 'inline-block';
   abrirModal('modal-encerrar');
 }
 
-function escolherResultadoEncerrar(fechou) {
-  resultadoEscolhidoEncerrar = fechou;
-  document.getElementById('enc-campo-valor').style.display = fechou ? 'block' : 'none';
-  document.getElementById('enc-btn-confirmar').style.display = 'inline-block';
-  document.getElementById('enc-btn-pular').style.display = 'none';
-}
-
-async function confirmarEncerrar() {
+// fechou: true = fechou pedido | false = não fechou | null = não informar (IA decide depois)
+async function confirmarEncerrar(fechou) {
   if (!leadConversaAtual) return;
   const erroEl = document.getElementById('enc-erro');
   erroEl.textContent = '';
 
   const body = {};
-  if (resultadoEscolhidoEncerrar === true) {
-    const valor = parseFloat(document.getElementById('enc-valor').value);
-    body.fechou_pedido = true;
-    body.valor_venda = isNaN(valor) ? 0 : valor;
-  } else if (resultadoEscolhidoEncerrar === false) {
-    body.fechou_pedido = false;
-  }
+  if (fechou === true) body.fechou_pedido = true;
+  else if (fechou === false) body.fechou_pedido = false;
 
   const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/encerrar`, {
     method: 'POST',
