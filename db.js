@@ -176,6 +176,11 @@ if (!colunaExiste('mensagens', 'midia_url')) {
 if (!colunaExiste('mensagens', 'midia_tipo')) {
   db.exec(`ALTER TABLE mensagens ADD COLUMN midia_tipo TEXT`);
 }
+// Nome original do arquivo — sem isso, não dá pra oferecer um download
+// de verdade (com extensão certa) pra quem for abrir o anexo depois.
+if (!colunaExiste('mensagens', 'midia_nome')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN midia_nome TEXT`);
+}
 // marca quando o dono (ou gestor) abriu a conversa pela última vez —
 // alimenta o badge de "mensagem não lida" nas Conversas Ativas
 if (!colunaExiste('leads', 'visto_em')) {

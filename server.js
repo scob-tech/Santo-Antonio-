@@ -331,10 +331,11 @@ function truncar(texto, tamanho = 100) {
   return texto.length > tamanho ? texto.slice(0, tamanho - 1) + '…' : texto;
 }
 
-async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo }) {
+async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo, setor = 'vendas' }) {
+  const setorObj = db.getSetorPorSlug(setor) || db.getSetorPorSlug('vendas');
   const leadExistente = db.prepare(`
-    SELECT * FROM leads WHERE telefone = ? ORDER BY criado_em DESC LIMIT 1
-  `).get(telefone);
+    SELECT * FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
+  `).get(telefone, setorObj.id);
 
   if (leadExistente && leadExistente.status !== 'encerrado') {
     // Conversa já em aberto (novo ou em_atendimento) — só adiciona a mensagem
@@ -408,13 +409,7 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse, setor_id)
     VALUES (?, ?, ?, ?, 'novo', ?, ?)
   `);
-  // Só existe 1 número de WhatsApp (Z-API) configurado até agora, o de
-  // Vendas — então todo lead que chega por aqui é de Vendas. Quando
-  // Financeiro e Expedição ganharem seus próprios números, esse trecho
-  // precisa identificar de qual número a mensagem chegou pra escolher o
-  // setor certo (hoje o zapi.js não distingue instâncias).
-  const setorWebhook = db.getSetorPorSlug('vendas');
-  const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', interesse, setorWebhook.id);
+  const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', interesse, setorObj.id);
   const leadId = info.lastInsertRowid;
 
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
@@ -430,7 +425,7 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto) VALUES (?, 'ia', ?)`)
       .run(leadId, boasVindas);
     // Manda a boas-vindas de verdade pro WhatsApp do cliente (se configurado)
-    await zapi.enviarMensagemWhatsapp(telefone, boasVindas);
+    await zapi.enviarMensagemWhatsapp(telefone, boasVindas, setor);
   }
 
   return { lead_id: leadId, mensagem_boas_vindas: boasVindas, oportunidades_detectadas: oportunidades };
@@ -445,53 +440,64 @@ app.post('/webhook/message', async (req, res) => {
   res.status(resultado.mensagem_boas_vindas ? 201 : 200).json(resultado);
 });
 
-// Webhook real da Z-API — configure essa URL no painel da instância em
-// "Webhooks" → "Ao receber" (ReceivedCallback): https://SEU-DOMINIO/webhook/zapi
-app.post('/webhook/zapi', async (req, res) => {
-  const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe } = zapi.interpretarWebhook(req.body);
+// Webhook real da Z-API — configure essa URL no painel de CADA instância,
+// em "Webhooks" → "Ao receber" (ReceivedCallback):
+//   Vendas:     https://SEU-DOMINIO/webhook/zapi              (é a de sempre, não muda)
+//   Financeiro: https://SEU-DOMINIO/webhook/zapi/financeiro
+//   Expedição:  https://SEU-DOMINIO/webhook/zapi/expedicao
+function criarHandlerWebhookZapi(setor) {
+  return async (req, res) => {
+    const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe } = zapi.interpretarWebhook(req.body);
+    const setorObj = db.getSetorPorSlug(setor);
 
-  // fromMe: true pode ser (a) eco da mensagem que NÓS mandamos pela API,
-  // ou (b) o vendedor respondendo manualmente direto no WhatsApp do celular
-  // conectado. No caso (b), registramos a mensagem na conversa também —
-  // senão ela fica invisível no sistema mesmo tendo sido enviada de verdade.
-  if (fromMe) {
-    if (zapi.foiEnviadaPorNos(messageId)) {
-      return res.status(200).json({ info: 'eco da nossa própria mensagem, ignorado' });
-    }
-    if (zapi.jaProcessada(`manual-${messageId}`)) {
-      return res.status(200).json({ info: 'mensagem manual já processada antes, ignorada' });
-    }
-    if (telefone && texto) {
-      zapi.marcarProcessada(`manual-${messageId}`);
-      const leadAtivo = db.prepare(`
-        SELECT * FROM leads WHERE telefone = ? AND status = 'em_atendimento' ORDER BY criado_em DESC LIMIT 1
-      `).get(telefone);
-      if (leadAtivo) {
-        db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
-          .run(leadAtivo.id, texto, midiaUrl || null, midiaTipo || null);
-        return res.status(200).json({ info: 'mensagem manual do vendedor registrada na conversa' });
+    // fromMe: true pode ser (a) eco da mensagem que NÓS mandamos pela API,
+    // ou (b) o vendedor respondendo manualmente direto no WhatsApp do celular
+    // conectado. No caso (b), registramos a mensagem na conversa também —
+    // senão ela fica invisível no sistema mesmo tendo sido enviada de verdade.
+    if (fromMe) {
+      if (zapi.foiEnviadaPorNos(messageId)) {
+        return res.status(200).json({ info: 'eco da nossa própria mensagem, ignorado' });
       }
+      if (zapi.jaProcessada(`manual-${messageId}`)) {
+        return res.status(200).json({ info: 'mensagem manual já processada antes, ignorada' });
+      }
+      if (telefone && texto) {
+        zapi.marcarProcessada(`manual-${messageId}`);
+        const leadAtivo = db.prepare(`
+          SELECT * FROM leads WHERE telefone = ? AND setor_id = ? AND status = 'em_atendimento' ORDER BY criado_em DESC LIMIT 1
+        `).get(telefone, setorObj.id);
+        if (leadAtivo) {
+          db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
+            .run(leadAtivo.id, texto, midiaUrl || null, midiaTipo || null);
+          return res.status(200).json({ info: 'mensagem manual do vendedor registrada na conversa' });
+        }
+      }
+      return res.status(200).json({ info: 'mensagem enviada por nós (sem lead ativo correspondente), ignorada' });
     }
-    return res.status(200).json({ info: 'mensagem enviada por nós (sem lead ativo correspondente), ignorada' });
-  }
-  if (zapi.jaProcessada(messageId)) {
-    return res.status(200).json({ info: 'mensagem já processada antes (duplicada), ignorada' });
-  }
-  if (!telefone || !texto) {
-    return res.status(200).json({ info: 'payload sem telefone/texto reconhecível, ignorado' });
-  }
+    if (zapi.jaProcessada(messageId)) {
+      return res.status(200).json({ info: 'mensagem já processada antes (duplicada), ignorada' });
+    }
+    if (!telefone || !texto) {
+      return res.status(200).json({ info: 'payload sem telefone/texto reconhecível, ignorado' });
+    }
 
-  zapi.marcarProcessada(messageId);
-  const resultado = await processarMensagemRecebida({
-    telefone,
-    nome_cliente: nomeCliente,
-    texto,
-    origem: 'whatsapp',
-    midia_url: midiaUrl,
-    midia_tipo: midiaTipo,
-  });
-  res.status(200).json(resultado);
-});
+    zapi.marcarProcessada(messageId);
+    const resultado = await processarMensagemRecebida({
+      telefone,
+      nome_cliente: nomeCliente,
+      texto,
+      origem: 'whatsapp',
+      midia_url: midiaUrl,
+      midia_tipo: midiaTipo,
+      setor,
+    });
+    res.status(200).json(resultado);
+  };
+}
+
+app.post('/webhook/zapi', criarHandlerWebhookZapi('vendas'));
+app.post('/webhook/zapi/financeiro', criarHandlerWebhookZapi('financeiro'));
+app.post('/webhook/zapi/expedicao', criarHandlerWebhookZapi('expedicao'));
 
 // ---------------------------------------------------------------
 // LEADS
@@ -516,14 +522,25 @@ app.get('/api/leads/buscar', requireAuth, (req, res) => {
     ORDER BY criado_em DESC LIMIT 30
   `).all(`%${termo}%`, `%${termo}%`, setorAtivo.id);
 
-  const visiveis = todos.filter((l) => ehGestor(req.usuario) || l.vendedor_id === req.usuario.id);
-
-  const resultado = visiveis.map((lead) => {
-    const ultima = db.prepare(
-      'SELECT remetente, texto, criado_em FROM mensagens WHERE lead_id = ? ORDER BY id DESC LIMIT 1'
-    ).get(lead.id);
-    return { id: lead.id, nome_cliente: lead.nome_cliente, telefone: lead.telefone, status: lead.status, ultima_mensagem: ultima || null };
-  });
+  // Mesmo formato de dado que /api/leads devolve, pra renderizar
+  // exatamente igual na tela (mesmo tamanho, mesmo badge, etc.) —
+  // antes essa busca devolvia um resumo mais pobre e o item ficava
+  // visualmente diferente do resto da lista.
+  const resultado = todos
+    .filter((lead) => ehGestor(req.usuario) || lead.vendedor_id === req.usuario.id || lead.status === 'novo')
+    .map((lead) => {
+      const dono = lead.vendedor_id === req.usuario.id;
+      const ultima = db.prepare(
+        'SELECT remetente, texto, criado_em FROM mensagens WHERE lead_id = ? ORDER BY id DESC LIMIT 1'
+      ).get(lead.id);
+      const vendedor = lead.vendedor_id
+        ? db.prepare('SELECT nome FROM vendedores WHERE id = ?').get(lead.vendedor_id)
+        : null;
+      const naoLidas = lead.visto_em
+        ? db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente' AND criado_em > ?`).get(lead.id, lead.visto_em).n
+        : db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente'`).get(lead.id).n;
+      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas };
+    });
 
   res.json(resultado);
 });
@@ -829,12 +846,12 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
       .run(lead.vendedor_id || req.usuario.id, req.params.id);
   }
 
-  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
-    .run(req.params.id, textoFinal, midia_base64 || null, midia_tipo || null);
+  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, midia_nome) VALUES (?, 'vendedor', ?, ?, ?, ?)`)
+    .run(req.params.id, textoFinal, midia_base64 || null, midia_tipo || null, midia_nome || null);
 
   const envio = midia_base64
-    ? await zapi.enviarMidiaWhatsapp(lead.telefone, midia_tipo, midia_base64, midia_nome, textoParaEnviar)
-    : await zapi.enviarMensagemWhatsapp(lead.telefone, textoParaEnviar);
+    ? await zapi.enviarMidiaWhatsapp(lead.telefone, midia_tipo, midia_base64, midia_nome, textoParaEnviar, setorDoLead ? setorDoLead.slug : 'vendas')
+    : await zapi.enviarMensagemWhatsapp(lead.telefone, textoParaEnviar, setorDoLead ? setorDoLead.slug : 'vendas');
 
   res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado });
 });
@@ -864,10 +881,14 @@ app.get('/api/lembretes', requireAuth, (req, res) => {
   if (setorAtivo.erro) return res.status(403).json(setorAtivo);
 
   const status = req.query.status || 'pendentes'; // pendentes | concluidas | todas
-  let condicaoFeito = status === 'concluidas' ? 'lembretes.feito = 1' : status === 'todas' ? '1=1' : 'lembretes.feito = 0';
+  let condicaoFeito;
   if (status === 'concluidas') {
-    // só as últimas 24h — senão a lista de concluídas só cresce e polui a tela
-    condicaoFeito += ` AND lembretes.concluido_em >= datetime('now', '-1 day')`;
+    condicaoFeito = `lembretes.feito = 1 AND lembretes.concluido_em >= datetime('now', '-1 day')`;
+  } else if (status === 'todas') {
+    // pendentes sem limite de tempo + concluídas só das últimas 24h
+    condicaoFeito = `(lembretes.feito = 0 OR (lembretes.feito = 1 AND lembretes.concluido_em >= datetime('now', '-1 day')))`;
+  } else {
+    condicaoFeito = 'lembretes.feito = 0';
   }
   const ordem = status === 'concluidas' ? 'lembretes.quando DESC' : 'lembretes.quando ASC';
 

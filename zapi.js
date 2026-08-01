@@ -4,24 +4,53 @@
 // cliente quando o vendedor ou a IA responde, e (2) ajudar a interpretar
 // o payload que a Z-API manda pro nosso webhook quando chega mensagem nova.
 //
-// Configuração via variáveis de ambiente (definidas no .env local ou nas
-// "Variables" do Railway):
-//   ZAPI_INSTANCE_ID   — Instance ID da instância criada no painel Z-API
-//   ZAPI_TOKEN         — Token da instância
-//   ZAPI_CLIENT_TOKEN  — (opcional) Client-Token de segurança da conta
+// Suporta 1 instância Z-API POR SETOR (Vendas/Financeiro/Expedição), cada
+// setor com seu próprio número de WhatsApp. Configuração via variáveis de
+// ambiente (definidas no .env local ou nas "Variables" do Railway):
 //
-// Se essas variáveis não estiverem definidas, o sistema continua
-// funcionando normalmente (modo demo/local) — só não manda nada de
-// verdade pro WhatsApp, e avisa no log.
+//   Vendas (nomes de sempre, sem mudar — é o que já está em produção):
+//     ZAPI_INSTANCE_ID / ZAPI_TOKEN / ZAPI_CLIENT_TOKEN
+//   Financeiro:
+//     ZAPI_FINANCEIRO_INSTANCE_ID / ZAPI_FINANCEIRO_TOKEN / ZAPI_FINANCEIRO_CLIENT_TOKEN
+//   Expedição:
+//     ZAPI_EXPEDICAO_INSTANCE_ID / ZAPI_EXPEDICAO_TOKEN / ZAPI_EXPEDICAO_CLIENT_TOKEN
+//
+// Se as variáveis de um setor não estiverem definidas, esse setor
+// continua funcionando normalmente (modo demo/local) — só não manda nada
+// de verdade pro WhatsApp dele, e avisa no log. Os outros setores não são
+// afetados — cada um é independente.
 
-const ZAPI_INSTANCE_ID = process.env.ZAPI_INSTANCE_ID;
-const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
-const ZAPI_CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN;
+const CREDENCIAIS_POR_SETOR = {
+  vendas: {
+    instanceId: process.env.ZAPI_INSTANCE_ID,
+    token: process.env.ZAPI_TOKEN,
+    clientToken: process.env.ZAPI_CLIENT_TOKEN,
+  },
+  financeiro: {
+    instanceId: process.env.ZAPI_FINANCEIRO_INSTANCE_ID,
+    token: process.env.ZAPI_FINANCEIRO_TOKEN,
+    clientToken: process.env.ZAPI_FINANCEIRO_CLIENT_TOKEN,
+  },
+  expedicao: {
+    instanceId: process.env.ZAPI_EXPEDICAO_INSTANCE_ID,
+    token: process.env.ZAPI_EXPEDICAO_TOKEN,
+    clientToken: process.env.ZAPI_EXPEDICAO_CLIENT_TOKEN,
+  },
+};
 
-const configurado = Boolean(ZAPI_INSTANCE_ID && ZAPI_TOKEN);
+function configuradoPara(setor) {
+  const c = CREDENCIAIS_POR_SETOR[setor];
+  return Boolean(c && c.instanceId && c.token);
+}
 
-if (!configurado) {
-  console.log('>> Z-API não configurada (ZAPI_INSTANCE_ID/ZAPI_TOKEN ausentes) — mensagens de saída só serão salvas no banco, não enviadas de verdade.');
+// Compatibilidade: `configurado` (sem parâmetro) continua existindo e
+// reflete só o Vendas, pra não quebrar nada que já lia essa propriedade.
+const configurado = configuradoPara('vendas');
+
+for (const setor of Object.keys(CREDENCIAIS_POR_SETOR)) {
+  if (!configuradoPara(setor)) {
+    console.log(`>> Z-API do setor "${setor}" não configurada — mensagens de saída desse setor só serão salvas no banco, não enviadas de verdade.`);
+  }
 }
 
 // Dedupe simples em memória — a Z-API avisa que a mesma mensagem pode
@@ -129,15 +158,16 @@ function foiEnviadaPorNos(messageId) {
 // Manda uma mensagem de texto de verdade pro WhatsApp do cliente.
 // Não lança erro pro chamador — só loga — pra nunca travar o fluxo interno
 // (salvar no banco) por causa de uma falha externa da Z-API.
-async function enviarMensagemWhatsapp(telefone, texto) {
-  if (!configurado) {
-    console.log(`>> [Z-API não configurada] mensagem NÃO enviada de verdade pra ${telefone}: "${texto}"`);
+async function enviarMensagemWhatsapp(telefone, texto, setor = 'vendas') {
+  const cred = CREDENCIAIS_POR_SETOR[setor];
+  if (!configuradoPara(setor)) {
+    console.log(`>> [Z-API "${setor}" não configurada] mensagem NÃO enviada de verdade pra ${telefone}: "${texto}"`);
     return { enviado: false, motivo: 'zapi_nao_configurada' };
   }
 
-  const url = `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}/send-text`;
+  const url = `https://api.z-api.io/instances/${cred.instanceId}/token/${cred.token}/send-text`;
   const headers = { 'Content-Type': 'application/json' };
-  if (ZAPI_CLIENT_TOKEN) headers['Client-Token'] = ZAPI_CLIENT_TOKEN;
+  if (cred.clientToken) headers['Client-Token'] = cred.clientToken;
 
   try {
     const res = await fetch(url, {
@@ -147,7 +177,7 @@ async function enviarMensagemWhatsapp(telefone, texto) {
     });
     if (!res.ok) {
       const erro = await res.text().catch(() => '');
-      console.error(`>> Falha ao enviar mensagem via Z-API (status ${res.status}): ${erro}`);
+      console.error(`>> Falha ao enviar mensagem via Z-API [${setor}] (status ${res.status}): ${erro}`);
       return { enviado: false, motivo: 'erro_zapi', status: res.status };
     }
     const data = await res.json().catch(() => null);
@@ -160,7 +190,7 @@ async function enviarMensagemWhatsapp(telefone, texto) {
     }
     return { enviado: true };
   } catch (err) {
-    console.error('>> Erro de rede ao chamar a Z-API:', err.message);
+    console.error(`>> Erro de rede ao chamar a Z-API [${setor}]:`, err.message);
     return { enviado: false, motivo: 'erro_rede' };
   }
 }
@@ -169,15 +199,16 @@ async function enviarMensagemWhatsapp(telefone, texto) {
 // do cliente. Aceita tanto link quanto Base64 (a Z-API aceita os dois —
 // usamos Base64 aqui porque o arquivo vem direto do navegador do vendedor,
 // sem precisar hospedar em lugar nenhum antes).
-async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, legenda) {
-  if (!configurado) {
-    console.log(`>> [Z-API não configurada] mídia (${midiaTipo}) NÃO enviada de verdade pra ${telefone}`);
+async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, legenda, setor = 'vendas') {
+  const cred = CREDENCIAIS_POR_SETOR[setor];
+  if (!configuradoPara(setor)) {
+    console.log(`>> [Z-API "${setor}" não configurada] mídia (${midiaTipo}) NÃO enviada de verdade pra ${telefone}`);
     return { enviado: false, motivo: 'zapi_nao_configurada' };
   }
 
   const headers = { 'Content-Type': 'application/json' };
-  if (ZAPI_CLIENT_TOKEN) headers['Client-Token'] = ZAPI_CLIENT_TOKEN;
-  const base = `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}`;
+  if (cred.clientToken) headers['Client-Token'] = cred.clientToken;
+  const base = `https://api.z-api.io/instances/${cred.instanceId}/token/${cred.token}`;
 
   let url;
   let body;
@@ -191,23 +222,23 @@ async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, le
     url = `${base}/send-video`;
     body = { phone: telefone, video: dataUri, caption: legenda || '' };
   } else {
-    const extensao = (nomeArquivo && nomeArquivo.includes('.')) ? nomeArquivo.split('.').pop() : 'pdf';
+    const extensao = (nomeArquivo && nomeArquivo.includes('.')) ? nomeArquivo.split('.').pop().toLowerCase().trim() : 'pdf';
     url = `${base}/send-document/${extensao}`;
-    body = { phone: telefone, document: dataUri, fileName: nomeArquivo || `arquivo.${extensao}` };
+    body = { phone: telefone, document: dataUri, fileName: nomeArquivo || `arquivo.${extensao}`, caption: legenda || '' };
   }
 
   try {
     const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
     if (!res.ok) {
       const erro = await res.text().catch(() => '');
-      console.error(`>> Falha ao enviar mídia via Z-API (status ${res.status}): ${erro}`);
+      console.error(`>> Falha ao enviar mídia via Z-API [${setor}] (status ${res.status}): ${erro}`);
       return { enviado: false, motivo: 'erro_zapi', status: res.status };
     }
     return { enviado: true };
   } catch (err) {
-    console.error('>> Erro de rede ao enviar mídia pela Z-API:', err.message);
+    console.error(`>> Erro de rede ao enviar mídia pela Z-API [${setor}]:`, err.message);
     return { enviado: false, motivo: 'erro_rede' };
   }
 }
 
-module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado };
+module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado, configuradoPara };
