@@ -297,7 +297,7 @@ function renderizarUserBox() {
       <span class="chevron">▾</span>
       <div class="user-dropdown" id="user-dropdown" hidden>
         <button class="user-dropdown-item" onclick="event.stopPropagation(); document.getElementById('user-dropdown').hidden = true; mudarView('configuracoes');" style="display:flex; align-items:center; gap:8px;">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.97 7.97 0 000-2l2-1.5-2-3.4-2.3.9a8 8 0 00-1.7-1L15 3h-4l-.4 2.9a8 8 0 00-1.7 1l-2.3-.9-2 3.4L6.6 11a7.97 7.97 0 000 2l-2 1.5 2 3.4 2.3-.9a8 8 0 001.7 1L11 21h4l.4-2.9a8 8 0 001.7-1l2.3.9 2-3.4-2-1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" fill="none"/></svg>
           Configurações
         </button>
         <div class="user-dropdown-divider"></div>
@@ -336,15 +336,15 @@ function renderizarConfiguracoes() {
   if (usuarioAtual.role === 'admin') {
     el.innerHTML = `
       <h3>Cadastros</h3>
-      <p>Cadastrar novo vendedor no sistema.</p>
-      <button class="btn-primary btn-small" style="width:100%;" onclick="document.getElementById('painel-vendedores').scrollIntoView({behavior:'smooth'}); document.getElementById('cadastro-form').classList.add('aberto');">+ Cadastrar vendedor</button>
-      <p style="font-size:11.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">A lista da equipe fica logo abaixo, nessa mesma tela.</p>
+      <p>Cadastro de funcionários — apenas administradores podem contratar/dar acesso a alguém novo.</p>
+      <button class="btn-primary btn-small" style="width:100%;" onclick="document.getElementById('painel-vendedores').scrollIntoView({behavior:'smooth'}); document.getElementById('cadastro-form').classList.add('aberto');">+ Cadastrar funcionário</button>
+      <p style="font-size:11.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">A lista da equipe fica logo abaixo, nessa mesma tela. Clientes, fornecedores e parceiros são cadastrados como contato (+ Novo Lead), não aqui.</p>
     `;
   } else {
     el.innerHTML = `
       <h3>Cadastros</h3>
-      <p>Cadastrar novo vendedor no sistema.</p>
-      <p style="font-size:12.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">Somente administradores podem cadastrar novos usuários.</p>
+      <p>Cadastro de funcionários — apenas administradores podem contratar/dar acesso a alguém novo.</p>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">Pra registrar cliente, fornecedor ou parceiro novo, use "+ Novo Lead" na tela de Início.</p>
     `;
   }
 }
@@ -391,6 +391,21 @@ async function salvarSenhaConfig() {
 }
 
 // ---------------- Metas (admin define, vendedor acompanha) ----------------
+function atualizarPlaceholderMeta() {
+  const tipo = document.getElementById('metas-tipo').value;
+  const input = document.getElementById('metas-valor');
+  const preview = document.getElementById('metas-valor-preview');
+  const placeholders = { pedidos: 'Ex: 15', valor: 'Ex: 20000', atendimentos: 'Ex: 30' };
+  input.placeholder = placeholders[tipo] || 'Valor da meta';
+
+  if (tipo === 'valor' && input.value) {
+    const num = parseFloat(input.value);
+    preview.textContent = isNaN(num) ? '' : `= ${num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
+  } else {
+    preview.textContent = '';
+  }
+}
+
 async function popularSelectVendedoresMetas() {
   const select = document.getElementById('metas-vendedor');
   if (select.dataset.carregado === setorAtivo) return;
@@ -425,6 +440,7 @@ async function carregarMetaParaEdicao() {
     document.getElementById('metas-valor').value = '';
     removerBtn.style.display = 'none';
   }
+  atualizarPlaceholderMeta();
 }
 
 async function salvarMeta() {
@@ -506,6 +522,39 @@ async function carregarMinhaMeta() {
   document.getElementById('meta-status').textContent = data.percentual >= 100
     ? '🎉 Meta batida! Parabéns!'
     : `${data.percentual}% da meta`;
+
+  // Confete só na hora que bate 100% de verdade — não fica repetindo a
+  // cada atualização de 3s enquanto a meta continuar batida.
+  const chaveMeta = `${data.meta.id}-${data.meta.definida_em}`;
+  if (data.percentual >= 100 && metaBatidaComemorada !== chaveMeta) {
+    metaBatidaComemorada = chaveMeta;
+    dispararConfete();
+  }
+}
+
+let metaBatidaComemorada = null;
+
+function dispararConfete() {
+  const cores = ['#2B3990', '#E63329', '#16A34A', '#F5820D', '#FFD166'];
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed; inset:0; pointer-events:none; z-index:200; overflow:hidden;';
+  document.body.appendChild(container);
+
+  for (let i = 0; i < 60; i++) {
+    const pedaco = document.createElement('div');
+    const cor = cores[Math.floor(Math.random() * cores.length)];
+    const esquerda = Math.random() * 100;
+    const atraso = Math.random() * 0.4;
+    const duracao = 2.2 + Math.random() * 1.2;
+    const tamanho = 6 + Math.random() * 6;
+    pedaco.style.cssText = `
+      position:absolute; top:-20px; left:${esquerda}vw; width:${tamanho}px; height:${tamanho * 0.6}px;
+      background:${cor}; opacity:.9; border-radius:2px;
+      animation: cair-confete ${duracao}s ease-in ${atraso}s forwards;
+    `;
+    container.appendChild(pedaco);
+  }
+  setTimeout(() => container.remove(), 4000);
 }
 
 // Abre/fecha o menu do usuário (chip no topo). Fecha sozinho se a pessoa
@@ -687,11 +736,7 @@ async function excluirVendedor(id, nome) {
 
 async function carregarLeads() {
   if (!setorAtivo) return;
-  let url = `${API}/api/leads?status=novo&setor=${setorAtivo}`;
-  const filtroData = document.getElementById('filtro-data-fila');
-  if (filtroData && filtroData.value) {
-    url += `&data=${filtroData.value}`;
-  }
+  const url = `${API}/api/leads?status=novo&setor=${setorAtivo}`;
   const res = await fetch(url);
   if (res.status === 401) return window.location.href = '/login.html';
   const leads = await res.json();
@@ -783,7 +828,8 @@ function renderizarMidia(m) {
     return `<video controls src="${url}" style="max-width:100%; border-radius:8px; margin-bottom:6px; display:block;"></video>`;
   }
   if (m.midia_tipo === 'documento') {
-    return `<a href="${url}" target="_blank" rel="noopener" style="display:block; margin-bottom:6px;">📄 Abrir documento</a>`;
+    const nome = m.midia_nome || 'documento';
+    return `<a href="${url}" download="${escapeHtml(nome)}" style="display:block; margin-bottom:6px;">📄 Baixar ${escapeHtml(nome)}</a>`;
   }
   if (m.midia_tipo === 'sticker') {
     return `<img src="${url}" style="max-width:100px; display:block; margin-bottom:4px;" />`;
@@ -1302,16 +1348,19 @@ async function carregarConversasAtivas(termoBusca) {
     ? ativas.map(renderizarItemConversa).join('')
     : `<li class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa ativa no momento.'}</li>`;
 
-  // --- Aba "Histórico": só encerrado (a não ser que a busca do Histórico
-  // esteja em uso — nesse caso quem manda é filtrarHistorico, não aqui) ---
+  // --- Aba "Histórico": só encerrado, últimas 24h (a busca cobre o resto
+  // — a não ser que ela esteja em uso, nesse caso quem manda é
+  // filtrarHistorico, não aqui) ---
   const buscaHistoricoEl = document.getElementById('busca-historico');
   if (buscaHistoricoEl && buscaHistoricoEl.value.trim().length >= 2) return;
   const elHistorico = document.getElementById('historico-lista');
   if (elHistorico) {
-    const encerradas = ordenarConversasPorAtividade(leads.filter((l) => l.status === 'encerrado'));
+    const ha24h = Date.now() - 24 * 60 * 60 * 1000;
+    const encerradasRecentes = leads.filter((l) => l.status === 'encerrado' && l.encerrado_em && new Date(l.encerrado_em + 'Z').getTime() >= ha24h);
+    const encerradas = ordenarConversasPorAtividade(encerradasRecentes);
     elHistorico.innerHTML = encerradas.length > 0
       ? encerradas.map(renderizarItemConversa).join('')
-      : `<li class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa encerrada ainda.</li>`;
+      : `<li class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa encerrada nas últimas 24h. Use a busca acima pra achar conversas mais antigas.</li>`;
   }
 }
 
@@ -1768,6 +1817,10 @@ function fecharMenuMobile() {
   const logado = await checarSessao();
   if (!logado) return;
   registrarServiceWorker();
+  ['busca-conversas', 'busca-historico'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
   atualizarTudo();
   abrirLeadDaUrlSeTiver();
   setInterval(atualizarTudo, 3000); // atualiza sozinho a cada 3s (depois trocamos por realtime)
