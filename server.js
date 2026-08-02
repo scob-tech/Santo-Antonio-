@@ -832,9 +832,13 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   // Financeiro e Expedição usam 1 número de WhatsApp pra equipe inteira —
   // sem isso, o cliente não sabe qual pessoa da equipe está falando com
   // ele. Vendas não precisa (histórico dela é 1 vendedor por cliente).
-  const setorDoLead = db.prepare('SELECT slug FROM setores WHERE id = ?').get(lead.setor_id);
+  // Formato "Primeiro Nome + Setor" (ex: "João Expedição") — curto o
+  // suficiente pra não poluir a mensagem, mas já deixa claro quem
+  // respondeu, evitando o "quem foi que falou comigo?" depois.
+  const setorDoLead = db.prepare('SELECT slug, nome FROM setores WHERE id = ?').get(lead.setor_id);
   if (setorDoLead && (setorDoLead.slug === 'financeiro' || setorDoLead.slug === 'expedicao') && texto) {
-    const prefixo = `*${req.usuario.nome}:*\n`;
+    const primeiroNome = req.usuario.nome.split(' ')[0];
+    const prefixo = `*${primeiroNome} ${setorDoLead.nome}:*\n`;
     textoFinal = prefixo + textoFinal;
     textoParaEnviar = prefixo + texto;
   }
