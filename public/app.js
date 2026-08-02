@@ -86,7 +86,11 @@ async function checarSessao() {
 
 // Só desenha alguma coisa na tela quando a conta acessa mais de 1 setor —
 // quem só tem Vendas (a imensa maioria hoje) não vê nenhuma mudança visual.
-const EMOJI_SETOR = { vendas: '🛒', financeiro: '💰', expedicao: '🚚' };
+const SVG_SETOR = {
+  vendas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h2l2.4 12.2a2 2 0 002 1.8h8.4a2 2 0 002-1.6L21 9H6"/><circle cx="9" cy="21" r="1"/><circle cx="18" cy="21" r="1"/></svg>',
+  financeiro: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>',
+  expedicao: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="7" width="14" height="10"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="2"/><circle cx="17.5" cy="19" r="2"/></svg>',
+};
 function renderizarSeletorSetor() {
   const el = document.getElementById('seletor-setor');
   if (!el) return;
@@ -99,7 +103,7 @@ function renderizarSeletorSetor() {
   el.className = 'seletor-setor sidebar-switcher';
   el.innerHTML = setoresDisponiveis.map((s) => `
     <button class="switch-item ${s.slug === setorAtivo ? 'is-active' : ''}" onclick="mudarSetor('${s.slug}')" title="${escapeHtml(s.nome)}">
-      <span class="switch-emoji">${EMOJI_SETOR[s.slug] || '🏷️'}</span><span>${escapeHtml(s.nome)}</span>
+      <span class="switch-icon">${SVG_SETOR[s.slug] || ''}</span><span>${escapeHtml(s.nome)}</span>
     </button>
   `).join('');
 }
