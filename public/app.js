@@ -464,7 +464,7 @@ async function popularSelectVendedoresMetas() {
   const res = await fetch(`${API}/api/vendedores`);
   if (!res.ok) return;
   const vendedores = await res.json();
-  const doSetor = vendedores.filter((v) => v.role !== 'admin' && (v.setores || []).includes(setorAtivo));
+  const doSetor = vendedores.filter((v) => v.role === 'vendedor' && (v.setores || []).includes(setorAtivo));
   select.innerHTML = '<option value="">Selecione um vendedor...</option>' +
     doSetor.map((v) => `<option value="${v.id}">${escapeHtml(v.nome)}</option>`).join('');
   select.dataset.carregado = setorAtivo;
