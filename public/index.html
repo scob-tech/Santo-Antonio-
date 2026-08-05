@@ -658,19 +658,37 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 .greeting p { margin: 0; color: var(--muted); font-size: 14px; }
 .admin-actions { display: flex; gap: 10px; margin-top: 14px; }
 .meta-card {
-  flex-shrink: 0; width: 300px; align-self: flex-start;
+  flex-shrink: 0; width: 420px; align-self: flex-start;
   background: linear-gradient(135deg, var(--navy) 0%, var(--navy-dark) 100%);
-  border: none; padding: 22px 24px; position: relative; overflow: hidden;
+  border: none; padding: 24px 26px; position: relative; overflow: hidden;
 }
 .meta-card .card-eyebrow { color: rgba(255,255,255,.7); letter-spacing: 1px; }
-.meta-numeros { font-family: 'Oswald', sans-serif; font-size: 27px; color: white; margin: 6px 0 14px; }
+.meta-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.meta-ring { flex-shrink: 0; margin-top: -6px; }
+#meta-ring-fill { transition: stroke-dashoffset .6s ease; }
+.meta-numeros { font-family: 'Oswald', sans-serif; font-size: 27px; color: white; margin: 10px 0 2px; }
+.meta-falta { font-size: 12.5px; color: rgba(255,255,255,.8); margin-bottom: 14px; }
+.meta-falta b { color: #FFD166; font-weight: 700; }
 .meta-barra-track { background: rgba(255,255,255,.22); border-radius: 8px; height: 10px; overflow: hidden; }
 .meta-barra-fill { background: white; height: 100%; border-radius: 8px; transition: width .5s ease; }
 .meta-barra-fill.meta-batida { background: #FFD166; }
-.meta-status { font-size: 12.5px; color: rgba(255,255,255,.85); margin-top: 10px; font-weight: 600; }
+.meta-mini-row { display: flex; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.16); }
+.meta-mini { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.meta-mini-icone { font-size: 16px; flex-shrink: 0; }
+.meta-mini-valor { font-family: 'Oswald', sans-serif; font-size: 14px; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta-mini-label { font-size: 10px; color: rgba(255,255,255,.65); white-space: nowrap; }
+
+.meta-celebra {
+  flex-shrink: 0; width: 220px; align-self: flex-start; text-align: center;
+  background: linear-gradient(160deg, #2A2F6B 0%, #171A42 100%);
+  border: none; padding: 24px 18px; position: relative; overflow: hidden;
+}
+.meta-celebra-trofeu { font-size: 46px; margin-bottom: 6px; }
+.meta-celebra-titulo { font-family: 'Oswald', sans-serif; font-size: 19px; color: white; text-transform: uppercase; }
+.meta-celebra-texto { font-size: 12px; color: rgba(255,255,255,.8); margin-top: 6px; line-height: 1.4; }
 @media (max-width: 900px) {
   .hero-row { flex-direction: column; }
-  .meta-card { width: 100%; }
+  .meta-card, .meta-celebra { width: 100%; }
 }
 
 .btn-primary, .btn-ghost {
@@ -893,13 +911,34 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
               <div class="admin-actions" id="painel-acoes-admin">
                 <button class="btn-primary btn-small" id="btn-relatorio" onclick="abrirRelatorio()" style="display:none;">📊 Relatório Diário</button>
                 <button class="btn-ghost btn-small" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Gerar Análise</button>
+                <button class="btn-ghost btn-small" id="btn-historico-relatorios" onclick="abrirHistoricoRelatorios()" style="display:none;">📚 Histórico de Relatórios</button>
               </div>
             </div>
             <div class="card meta-card" id="meta-card" style="display:none;">
-              <span class="card-eyebrow" id="meta-titulo">META DA SEMANA</span>
+              <div class="meta-head">
+                <span class="card-eyebrow" id="meta-titulo">🎯 SUA META DA SEMANA</span>
+                <svg class="meta-ring" width="90" height="90" viewBox="0 0 90 90">
+                  <circle cx="45" cy="45" r="38" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="8"/>
+                  <circle id="meta-ring-fill" cx="45" cy="45" r="38" fill="none" stroke="white" stroke-width="8"
+                    stroke-linecap="round" stroke-dasharray="238.76" stroke-dashoffset="238.76"
+                    transform="rotate(-90 45 45)"/>
+                  <text id="meta-ring-texto" x="45" y="41" text-anchor="middle" fill="white" font-family="'Oswald',sans-serif" font-size="20" font-weight="700">0%</text>
+                  <text x="45" y="57" text-anchor="middle" fill="rgba(255,255,255,.75)" font-family="'Inter',sans-serif" font-size="9">da meta</text>
+                </svg>
+              </div>
               <div class="meta-numeros" id="meta-numeros">0 / 0</div>
+              <div class="meta-falta" id="meta-falta"></div>
               <div class="meta-barra-track"><div class="meta-barra-fill" id="meta-barra-fill" style="width:0%;"></div></div>
-              <div class="meta-status" id="meta-status"></div>
+              <div class="meta-mini-row">
+                <div class="meta-mini"><span class="meta-mini-icone">📈</span><div><div class="meta-mini-valor" id="meta-mini-conquistado">—</div><div class="meta-mini-label">Já conquistado</div></div></div>
+                <div class="meta-mini"><span class="meta-mini-icone">🚩</span><div><div class="meta-mini-valor" id="meta-mini-faltam">—</div><div class="meta-mini-label">Faltam pra meta</div></div></div>
+                <div class="meta-mini"><span class="meta-mini-icone">📅</span><div><div class="meta-mini-valor" id="meta-mini-dias">—</div><div class="meta-mini-label">Dias restantes</div></div></div>
+              </div>
+            </div>
+            <div class="card meta-celebra" id="meta-celebra" style="display:none;">
+              <div class="meta-celebra-trofeu">🏆</div>
+              <div class="meta-celebra-titulo">Parabéns!</div>
+              <div class="meta-celebra-texto">Você bateu sua meta! Continue assim 🎉</div>
             </div>
           </section>
 
@@ -910,7 +949,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3" stroke="currentColor" stroke-width="2"/><path d="M2 20c0-3.3 3.1-6 7-6s7 2.7 7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 8v6M15 11h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                   Novos Leads <span class="count-pill count-pill--red" id="leads-count">0</span>
                 </span>
-                <button class="btn-add-inline" onclick="abrirNovoLeadManual()">+ Novo Lead</button>
+                <button class="btn-add-inline" onclick="abrirNovoLeadManual()">+ Criar Contato</button>
               </div>
               <ul class="lead-list" id="leads"></ul>
             </div>
@@ -922,7 +961,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
                   Conversas em Andamento <span class="count-pill count-pill--blue" id="conv-count">0</span>
                 </span>
               </div>
-              <input type="text" id="busca-conversas" name="busca-conversas-nao-autofill" autocomplete="off" placeholder="🔍 Buscar por nome ou telefone..." style="width:calc(100% - 40px); margin:0 20px 10px; padding:8px 10px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; box-sizing:border-box;" oninput="filtrarConversas(this.value)" />
+              <input type="text" id="busca-conversas" name="busca-conversas-nao-autofill" autocomplete="one-time-code" readonly onfocus="this.removeAttribute('readonly')" placeholder="🔍 Buscar por nome ou telefone..." style="width:calc(100% - 40px); margin:0 20px 10px; padding:8px 10px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; box-sizing:border-box;" oninput="filtrarConversas(this.value)" />
               <ul class="conv-list" id="conversas-ativas"></ul>
             </div>
           </section>
@@ -945,7 +984,16 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
         </div>
 
         <div class="view" id="view-clientes" hidden>
-          <div class="placeholder-view" id="placeholder-clientes"><strong>Clientes</strong>Cadastro de clientes ainda não existe nesse sistema — em construção.</div>
+          <section class="agenda-header">
+            <div>
+              <h1 id="contatos-titulo">Contatos</h1>
+              <p>Todo mundo que já foi salvo pela equipe.</p>
+            </div>
+          </section>
+          <input type="text" id="busca-contatos" name="busca-contatos-nao-autofill" autocomplete="one-time-code" readonly onfocus="this.removeAttribute('readonly')" placeholder="🔍 Buscar por nome ou telefone..." style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; margin-bottom:14px; box-sizing:border-box;" oninput="filtrarContatos(this.value)" />
+          <div class="card list-card">
+            <ul class="conv-list" id="contatos-lista"></ul>
+          </div>
         </div>
 
         <div class="view" id="view-historico" hidden>
@@ -955,7 +1003,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
               <p>Conversas encerradas.</p>
             </div>
           </section>
-          <input type="text" id="busca-historico" name="busca-historico-nao-autofill" autocomplete="off" placeholder="🔍 Buscar por nome ou telefone..." style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; margin-bottom:14px; box-sizing:border-box;" oninput="filtrarHistorico(this.value)" />
+          <input type="text" id="busca-historico" name="busca-historico-nao-autofill" autocomplete="one-time-code" readonly onfocus="this.removeAttribute('readonly')" placeholder="🔍 Buscar por nome ou telefone..." style="width:100%; padding:9px 12px; border-radius:6px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:13px; margin-bottom:14px; box-sizing:border-box;" oninput="filtrarHistorico(this.value)" />
           <div class="card list-card">
             <ul class="conv-list" id="historico-lista"></ul>
           </div>
@@ -1118,8 +1166,8 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   <!-- Modal: novo lead manual -->
   <div class="modal-overlay" id="modal-novo-lead">
     <div class="modal-box">
-      <h3>Novo lead manual</h3>
-      <p style="font-size:12px; color:var(--muted); margin-top:0;">Cliente que veio por outro canal (telefone, presencial). Fica registrado como nota — não manda mensagem nenhuma pro WhatsApp sozinho.</p>
+      <h3>Criar contato</h3>
+      <p style="font-size:12px; color:var(--muted); margin-top:0;">Salva o nome do contato e já deixa pronto pra começar uma conversa.</p>
       <label for="nl-nome">Nome do cliente</label>
       <input type="text" id="nl-nome" />
       <label for="nl-telefone">Telefone (com DDD)</label>
@@ -1203,6 +1251,20 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
+  <div class="modal-overlay" id="modal-salvar-contato">
+    <div class="modal-box">
+      <h3>💾 Salvar contato</h3>
+      <p style="font-size:13px; color:var(--muted); margin-top:-6px; margin-bottom:14px;">Esse número ainda não está salvo — dá um nome pra ele.</p>
+      <label>Nome</label>
+      <input type="text" id="sc-nome" placeholder="Nome do contato" />
+      <div class="modal-erro" id="sc-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-salvar-contato')" style="flex:1;">Cancelar</button>
+        <button onclick="confirmarSalvarContato()" style="flex:1;">Salvar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: nova tarefa (agenda) -->
   <div class="modal-overlay" id="modal-tarefa">
     <div class="modal-box">
@@ -1247,6 +1309,24 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
+  <div class="modal-overlay" id="modal-historico-relatorios">
+    <div class="modal-box" style="max-width:720px; width:92vw; display:flex; flex-direction:column; max-height:85vh;">
+      <h3>📚 Histórico de Relatórios — Financeiro</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:-8px; margin-bottom:14px;">Gargalos de negociação identificados pela IA, dia a dia.</p>
+      <div style="display:flex; gap:16px; flex:1; min-height:0;">
+        <div style="width:150px; flex-shrink:0; overflow-y:auto; border-right:1px solid var(--border); padding-right:12px;">
+          <div id="historico-relatorios-lista"></div>
+        </div>
+        <div style="flex:1; min-width:0; overflow-y:auto;">
+          <div id="historico-relatorios-conteudo" style="white-space:pre-wrap; font-size:13px; line-height:1.6; color:var(--text);"></div>
+        </div>
+      </div>
+      <div class="modal-actions" style="margin-top:14px;">
+        <button class="cancelar" onclick="fecharModal('modal-historico-relatorios')" style="flex:1;">Fechar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: conversa completa -->
   <div class="modal-overlay" id="modal-conversa">
     <div class="conversa-modal-box">
@@ -1264,6 +1344,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
           <button class="btn-subtle" onclick="abrirTransferir()">Transferir</button>
           <button class="btn-subtle btn-subtle--encerrar" onclick="encerrarLeadDaConversa()">Encerrar conversa</button>
         </div>
+        <button class="btn-subtle" id="btn-salvar-contato" onclick="abrirSalvarContato()" style="display:none; color:var(--navy); font-weight:700;">💾 Salvar contato</button>
       </div>
 
       <div class="conversa-modal-mensagens" id="conversa-mensagens"></div>

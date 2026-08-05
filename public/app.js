@@ -138,20 +138,16 @@ function atualizarPainelTitulo() {
   const navProgresso = document.getElementById('nav-item-progresso');
   if (navProgresso) navProgresso.style.display = setorAtivo === 'vendas' ? 'flex' : 'none';
 
-  // "Clientes" em Vendas é cadastro de cliente de verdade; em Financeiro/
-  // Expedição é só um jeito de começar uma conversa nova com alguém —
-  // por isso o nome muda.
+  // Histórico de relatórios (gargalo de negociação) só existe pro
+  // Financeiro, e só admin acessa.
+  const btnHistoricoRel = document.getElementById('btn-historico-relatorios');
+  if (btnHistoricoRel) btnHistoricoRel.style.display = (usuarioAtual.role === 'admin' && setorAtivo === 'financeiro') ? 'inline-block' : 'none';
+
+  // "Contatos" agora é uma lista de verdade (nome + telefone salvos pela
+  // equipe), igual pros 3 setores — não precisa mais trocar o rótulo
+  // dependendo do setor como antes.
   const labelClientes = document.getElementById('nav-clientes-label');
-  const placeholderClientes = document.getElementById('placeholder-clientes');
-  if (labelClientes) {
-    const ehVendas = setorAtivo === 'vendas';
-    labelClientes.textContent = ehVendas ? 'Clientes' : 'Cadastrar novo contato';
-    if (placeholderClientes) {
-      placeholderClientes.innerHTML = ehVendas
-        ? '<strong>Clientes</strong>Cadastro de clientes ainda não existe nesse sistema — em construção.'
-        : '<strong>Cadastrar novo contato</strong>Em construção — por enquanto, use "+ Novo Lead" na tela de Início pra começar uma conversa nova.';
-    }
-  }
+  if (labelClientes) labelClientes.textContent = 'Contatos';
 }
 
 function mudarSetor(slug) {
@@ -188,7 +184,59 @@ function mudarView(nome) {
   });
   document.getElementById('view-title').textContent = TITULOS_VIEW[nome] || '';
   if (nome === 'progresso') carregarProgresso();
+  if (nome === 'clientes') carregarContatos();
   fecharMenuMobile();
+}
+
+let buscaContatosTimeout = null;
+function filtrarContatos(termo) {
+  clearTimeout(buscaContatosTimeout);
+  buscaContatosTimeout = setTimeout(() => carregarContatos(termo.trim()), 250);
+}
+
+async function carregarContatos(termoBusca) {
+  const el = document.getElementById('contatos-lista');
+  if (!el) return;
+  const url = termoBusca ? `${API}/api/contatos?q=${encodeURIComponent(termoBusca)}` : `${API}/api/contatos`;
+  const res = await fetch(url);
+  if (res.status === 401) return window.location.href = '/login.html';
+  if (!res.ok) return;
+  const contatos = await res.json();
+
+  document.getElementById('contatos-titulo').textContent = `Contatos (${contatos.length})`;
+
+  el.innerHTML = contatos.length > 0
+    ? contatos.map((c) => `
+      <li class="conv-item" onclick="abrirConversaPorTelefone('${c.telefone}', '${escapeHtml(c.nome).replace(/'/g, "\\'")}')">
+        <div class="conv-avatar" style="background:${corAvatar(c.id)};">${escapeHtml(iniciais(c.nome))}</div>
+        <div class="conv-main">
+          <div class="conv-name">${escapeHtml(c.nome)}</div>
+          <p class="conv-preview">${escapeHtml(c.telefone)}</p>
+        </div>
+      </li>
+    `).join('')
+    : `<li class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhum contato encontrado.' : 'Nenhum contato salvo ainda. Use "Salvar contato" numa conversa, ou "+ Criar Contato" na tela de Início.'}</li>`;
+}
+
+// Clicar num contato salvo tenta achar uma conversa existente com esse
+// telefone no setor atual; se não tiver nenhuma ainda, cria uma nova
+// (mesmo caminho do "+ Criar Contato", só que sem pedir os dados de novo).
+async function abrirConversaPorTelefone(telefone, nome) {
+  const res = await fetch(`${API}/api/leads/buscar?q=${encodeURIComponent(telefone)}&setor=${setorAtivo}`);
+  if (res.ok) {
+    const encontrados = await res.json();
+    const existente = encontrados.find((l) => l.telefone === telefone);
+    if (existente) { abrirConversa(existente.id); return; }
+  }
+  const criar = await fetch(`${API}/api/leads/manual`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telefone, nome_cliente: nome, setor: setorAtivo }),
+  });
+  const data = await criar.json();
+  if (!criar.ok) { alert(data.erro || 'Erro ao abrir conversa'); return; }
+  atualizarTudo();
+  setTimeout(() => abrirConversa(data.lead_id), 200);
 }
 
 let progressoPeriodo = 'semana';
@@ -322,7 +370,7 @@ function renderizarUserBox() {
       document.getElementById('cadastro-form').classList.toggle('aberto');
     };
   }
-  if (ehGestor(usuarioAtual)) {
+  if (usuarioAtual.role === 'admin') {
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
   }
   if (usuarioAtual.role !== 'supervisor') {
@@ -342,13 +390,13 @@ function renderizarConfiguracoes() {
       <h3>Cadastros</h3>
       <p>Cadastro de funcionários — apenas administradores podem contratar/dar acesso a alguém novo.</p>
       <button class="btn-primary btn-small" style="width:100%;" onclick="document.getElementById('painel-vendedores').scrollIntoView({behavior:'smooth'}); document.getElementById('cadastro-form').classList.add('aberto');">+ Cadastrar funcionário</button>
-      <p style="font-size:11.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">A lista da equipe fica logo abaixo, nessa mesma tela. Clientes, fornecedores e parceiros são cadastrados como contato (+ Novo Lead), não aqui.</p>
+      <p style="font-size:11.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">A lista da equipe fica logo abaixo, nessa mesma tela. Clientes, fornecedores e parceiros são cadastrados como contato (+ Criar Contato, na tela de Início), não aqui.</p>
     `;
   } else {
     el.innerHTML = `
       <h3>Cadastros</h3>
       <p>Cadastro de funcionários — apenas administradores podem contratar/dar acesso a alguém novo.</p>
-      <p style="font-size:12.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">Pra registrar cliente, fornecedor ou parceiro novo, use "+ Novo Lead" na tela de Início.</p>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:10px; margin-bottom:0;">Pra registrar cliente, fornecedor ou parceiro novo, use "+ Criar Contato" na tela de Início.</p>
     `;
   }
 }
@@ -496,11 +544,13 @@ const LABELS_TIPO_META = {
 // meta ativa, ou se for admin/supervisor (gestor não tem meta pessoal).
 async function carregarMinhaMeta() {
   const card = document.getElementById('meta-card');
+  const celebra = document.getElementById('meta-celebra');
   const heroRow = document.getElementById('hero-row');
   if (!card || !usuarioAtual) return;
 
   if (ehGestor(usuarioAtual)) {
     card.style.display = 'none';
+    celebra.style.display = 'none';
     heroRow.className = 'hero-row hero-row--single';
     return;
   }
@@ -511,26 +561,43 @@ async function carregarMinhaMeta() {
 
   if (!data.meta) {
     card.style.display = 'none';
+    celebra.style.display = 'none';
     heroRow.className = 'hero-row hero-row--single';
     return;
   }
 
   const cfg = LABELS_TIPO_META[data.meta.tipo];
+  const bateu = data.percentual >= 100;
   card.style.display = 'block';
   heroRow.className = 'hero-row';
-  document.getElementById('meta-titulo').textContent = `META DA ${data.meta.periodo === 'mes' ? 'MÊS' : 'SEMANA'}`;
+
+  document.getElementById('meta-titulo').textContent = `🎯 SUA META DA ${data.meta.periodo === 'mes' ? 'MÊS' : 'SEMANA'}`;
   document.getElementById('meta-numeros').textContent = `${cfg.formatar(data.atual)} / ${cfg.formatar(data.meta.valor_meta)}`;
+  document.getElementById('meta-falta').innerHTML = bateu
+    ? '🎉 Meta batida — mandou bem!'
+    : `Faltam <b>${cfg.formatar(data.falta)}</b> pra você bater sua meta!`;
+
   const fill = document.getElementById('meta-barra-fill');
   fill.style.width = `${data.percentual}%`;
-  fill.classList.toggle('meta-batida', data.percentual >= 100);
-  document.getElementById('meta-status').textContent = data.percentual >= 100
-    ? '🎉 Meta batida! Parabéns!'
-    : `${data.percentual}% da meta`;
+  fill.classList.toggle('meta-batida', bateu);
+
+  // Anel de progresso — circunferência de r=38 é 2*PI*38 ≈ 238.76
+  const circunferencia = 238.76;
+  const offset = circunferencia * (1 - data.percentual / 100);
+  document.getElementById('meta-ring-fill').style.strokeDashoffset = offset;
+  document.getElementById('meta-ring-fill').style.stroke = bateu ? '#FFD166' : 'white';
+  document.getElementById('meta-ring-texto').textContent = `${data.percentual}%`;
+
+  document.getElementById('meta-mini-conquistado').textContent = cfg.formatar(data.atual);
+  document.getElementById('meta-mini-faltam').textContent = bateu ? '🎉' : cfg.formatar(data.falta);
+  document.getElementById('meta-mini-dias').textContent = data.diasRestantes === 0 ? 'Último dia!' : `${data.diasRestantes} dias`;
+
+  celebra.style.display = bateu ? 'block' : 'none';
 
   // Confete só na hora que bate 100% de verdade — não fica repetindo a
   // cada atualização de 3s enquanto a meta continuar batida.
   const chaveMeta = `${data.meta.id}-${data.meta.definida_em}`;
-  if (data.percentual >= 100 && metaBatidaComemorada !== chaveMeta) {
+  if (bateu && metaBatidaComemorada !== chaveMeta) {
     metaBatidaComemorada = chaveMeta;
     dispararConfete();
   }
@@ -649,6 +716,19 @@ async function rodarAnaliseDiariaAgora() {
   btn.disabled = true;
   btn.textContent = '🤖 Rodando...';
 
+  if (setorAtivo === 'financeiro') {
+    const res = await fetch(`${API}/api/relatorios-financeiro/gerar-agora?setor=financeiro`, { method: 'POST' });
+    const resultado = await res.json();
+    btn.disabled = false;
+    btn.textContent = '🤖 Gerar Análise';
+    if (!res.ok) {
+      alert(resultado.erro || 'Não rodou.');
+      return;
+    }
+    abrirHistoricoRelatorios(resultado.data);
+    return;
+  }
+
   const res = await fetch(`${API}/api/admin/rodar-analise-diaria`, { method: 'POST' });
   const resultado = await res.json();
 
@@ -661,6 +741,43 @@ async function rodarAnaliseDiariaAgora() {
   }
   alert(`Análise concluída: ${resultado.conversas_revisadas} conversa(s) revisada(s), ${resultado.tarefas_criadas} tarefa(s) criada(s).`);
   carregarLembretes();
+}
+
+async function abrirHistoricoRelatorios(dataParaAbrir) {
+  const res = await fetch(`${API}/api/relatorios-financeiro?setor=financeiro`);
+  if (!res.ok) { alert('Erro ao carregar histórico'); return; }
+  const datas = await res.json();
+  const listaEl = document.getElementById('historico-relatorios-lista');
+
+  if (datas.length === 0) {
+    listaEl.innerHTML = `<div class="empty-state" style="font-size:12px;">Nenhum relatório gerado ainda.</div>`;
+    document.getElementById('historico-relatorios-conteudo').textContent = '';
+    abrirModal('modal-historico-relatorios');
+    return;
+  }
+
+  listaEl.innerHTML = datas.map((d) => `
+    <button class="link-mini historico-rel-item" data-data="${d.data}" onclick="carregarConteudoRelatorio('${d.data}')"
+      style="display:block; width:100%; text-align:left; padding:7px 8px; border-radius:6px; font-size:12.5px; margin-bottom:2px;">
+      ${new Date(d.data + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+    </button>
+  `).join('');
+
+  abrirModal('modal-historico-relatorios');
+  carregarConteudoRelatorio(dataParaAbrir || datas[0].data);
+}
+
+async function carregarConteudoRelatorio(data) {
+  document.querySelectorAll('.historico-rel-item').forEach((b) => {
+    b.style.background = b.dataset.data === data ? 'var(--navy-bg)' : 'none';
+    b.style.color = b.dataset.data === data ? 'var(--navy)' : 'inherit';
+  });
+  const conteudoEl = document.getElementById('historico-relatorios-conteudo');
+  conteudoEl.textContent = 'Carregando...';
+  const res = await fetch(`${API}/api/relatorios-financeiro/${data}?setor=financeiro`);
+  if (!res.ok) { conteudoEl.textContent = 'Relatório não encontrado.'; return; }
+  const relatorio = await res.json();
+  conteudoEl.textContent = relatorio.conteudo;
 }
 
 async function sair() {
@@ -841,17 +958,27 @@ function renderizarMidia(m) {
   return '';
 }
 
+// O prefixo "*Nome:*" que a gente manda pro WhatsApp (Financeiro/Expedição/
+// grupo) usa a formatação de negrito do próprio WhatsApp (asterisco).
+// Aqui dentro do nosso sistema isso deve aparecer em negrito de verdade,
+// sem os asteriscos literais — só cosmético, não muda o texto salvo.
+function formatarTextoMensagem(texto) {
+  const escapado = escapeHtml(texto);
+  return escapado.replace(/^\*(.+?):\*\n/, '<strong>$1:</strong><br>');
+}
+
 function renderizarConversa(lead) {
   const nome = lead.nome_cliente || lead.telefone;
   document.getElementById('conversa-titulo').textContent = nome;
   document.getElementById('conversa-avatar').textContent = iniciais(nome);
   document.getElementById('conversa-subtitulo').textContent = `${lead.telefone} · ${lead.status === 'novo' ? 'Novo' : lead.status === 'em_atendimento' ? 'Em atendimento' : 'Encerrado'}`;
+  document.getElementById('btn-salvar-contato').style.display = lead.contato_salvo ? 'none' : 'inline-block';
 
   const msgsEl = document.getElementById('conversa-mensagens');
   msgsEl.innerHTML = lead.mensagens.map(m => {
     const classe = m.remetente === 'cliente' ? 'balao-cliente' : m.remetente === 'ia' ? 'balao-ia' : 'balao-vendedor';
     const hora = new Date(m.criado_em + 'Z').toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    return `<div class="balao ${classe}">${renderizarMidia(m)}${escapeHtml(m.texto)}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
+    return `<div class="balao ${classe}">${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
   }).join('');
   msgsEl.scrollTop = msgsEl.scrollHeight;
 
@@ -1106,8 +1233,49 @@ function usarSugestaoTarefa(sugestao) {
 // decide sozinha se converteu/perdeu, sem perguntar nada aqui.
 function encerrarLeadDaConversa() {
   if (!leadConversaAtual) return;
+
+  // Fechou/não fechou pedido é conceito de VENDA — Financeiro e Expedição
+  // não têm isso, então só perguntam uma vez, direto.
+  if (setorAtivo !== 'vendas') {
+    if (confirm('Encerrar essa conversa?')) confirmarEncerrar(null);
+    return;
+  }
+
   document.getElementById('enc-erro').textContent = '';
   abrirModal('modal-encerrar');
+}
+
+function abrirSalvarContato() {
+  if (!leadConversaAtual) return;
+  document.getElementById('sc-nome').value = leadConversaAtual.nome_cliente || '';
+  document.getElementById('sc-erro').textContent = '';
+  abrirModal('modal-salvar-contato');
+}
+
+async function confirmarSalvarContato() {
+  if (!leadConversaAtual) return;
+  const nome = document.getElementById('sc-nome').value.trim();
+  const erroEl = document.getElementById('sc-erro');
+  if (!nome) {
+    erroEl.textContent = 'Digite um nome.';
+    return;
+  }
+  const res = await fetch(`${API}/api/contatos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telefone: leadConversaAtual.telefone, nome }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    erroEl.textContent = err.erro || 'Erro ao salvar';
+    return;
+  }
+  fecharModal('modal-salvar-contato');
+  leadConversaAtual.contato_salvo = true;
+  leadConversaAtual.nome_cliente = nome;
+  document.getElementById('conversa-titulo').textContent = nome;
+  document.getElementById('btn-salvar-contato').style.display = 'none';
+  atualizarTudo();
 }
 
 // fechou: true = fechou pedido | false = não fechou | null = não informar (IA decide depois)
@@ -1169,6 +1337,16 @@ async function confirmarNovoLeadManual() {
     erroEl.textContent = err.erro || 'Erro ao salvar';
     erroEl.style.display = 'block';
     return;
+  }
+
+  // Já salva como contato de verdade também, se um nome foi informado —
+  // é exatamente o que esse botão promete fazer.
+  if (nome_cliente) {
+    fetch(`${API}/api/contatos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telefone, nome: nome_cliente }),
+    }).catch(() => {});
   }
 
   fecharModal('modal-novo-lead');
@@ -1307,7 +1485,8 @@ function ordenarConversasPorAtividade(lista) {
 
 function renderizarItemConversa(l) {
   const nome = l.nome_cliente || l.telefone;
-  const preview = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
+  const previewBruto = l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem;
+  const preview = previewBruto.replace(/^\*(.+?):\*\n/, '$1: ');
   const tagVendedor = ehGestor(usuarioAtual) && l.vendedor_nome ? `<span class="setor-tag">${escapeHtml(l.vendedor_nome)}</span>` : '';
   const naoLidas = l.nao_lidas || 0;
   const semResposta = precisaResposta(l);
@@ -1821,7 +2000,7 @@ function fecharMenuMobile() {
   const logado = await checarSessao();
   if (!logado) return;
   registrarServiceWorker();
-  ['busca-conversas', 'busca-historico'].forEach((id) => {
+  ['busca-conversas', 'busca-historico', 'busca-contatos'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
