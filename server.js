@@ -1366,6 +1366,11 @@ app.get('/api/metas/:vendedorId', requireAuth, (req, res) => {
 
 app.post('/api/metas/:vendedorId', requireAuth, requireAdmin, (req, res) => {
   const vendedorId = Number(req.params.vendedorId);
+  const alvo = db.prepare('SELECT role FROM vendedores WHERE id = ?').get(vendedorId);
+  if (!alvo) return res.status(404).json({ erro: 'vendedor não encontrado' });
+  if (alvo.role !== 'vendedor') {
+    return res.status(400).json({ erro: 'meta é só pra quem tem cargo de vendedor — admin e supervisor não têm meta pessoal' });
+  }
   const { tipo, valor_meta, periodo } = req.body;
   if (!['valor', 'pedidos', 'atendimentos'].includes(tipo)) {
     return res.status(400).json({ erro: 'tipo de meta inválido' });
