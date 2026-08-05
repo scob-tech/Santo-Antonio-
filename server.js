@@ -126,7 +126,18 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json(req.usuario);
+  // A sessão guarda uma "foto" do usuário tirada no momento do login —
+  // se o admin editar nome/cargo/setor de alguém depois, quem já está
+  // logado só veria a mudança deslogando e logando de novo. Buscando
+  // fresco do banco aqui, a mudança aparece na hora, sem precisar disso.
+  const vendedor = db.prepare('SELECT id, nome, login, role FROM vendedores WHERE id = ?').get(req.usuario.id);
+  if (!vendedor) return res.status(401).json({ erro: 'conta não existe mais' });
+
+  const setoresPermitidos = vendedor.role === 'admin'
+    ? db.getTodosSetores().map((s) => s.slug)
+    : db.getSetoresPermitidos(vendedor.id).map((s) => s.slug);
+
+  res.json({ ...vendedor, setoresPermitidos });
 });
 
 // Autoatendimento: qualquer vendedor troca a própria senha, desde que
@@ -331,8 +342,15 @@ function truncar(texto, tamanho = 100) {
   return texto.length > tamanho ? texto.slice(0, tamanho - 1) + '…' : texto;
 }
 
-async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo, setor = 'vendas' }) {
+async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo, setor = 'vendas', isGrupo = false }) {
   const setorObj = db.getSetorPorSlug(setor) || db.getSetorPorSlug('vendas');
+
+  // Contato já salvo pela equipe tem prioridade sobre o nome que vem do
+  // WhatsApp (push name) — sem isso, toda mensagem nova ia sobrescrever o
+  // nome que a equipe escolheu com o nome "de fábrica" do WhatsApp.
+  const contatoSalvo = db.getContatoPorTelefone(telefone);
+  if (contatoSalvo) nome_cliente = contatoSalvo.nome;
+
   const leadExistente = db.prepare(`
     SELECT * FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
   `).get(telefone, setorObj.id);
@@ -360,7 +378,7 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     // Cliente que já conversou antes volta a escrever — reabre a conversa
     // antiga (com todo o histórico) em vez de criar um lead do zero.
     // Se já tinha vendedor, volta pra ele; se nunca teve, volta pra fila.
-    const novoStatus = leadExistente.vendedor_id ? 'em_atendimento' : 'novo';
+    const novoStatus = (isGrupo || leadExistente.vendedor_id) ? 'em_atendimento' : 'novo';
     // Quando volta pra fila ('novo'), atualiza criado_em pra AGORA. Sem isso,
     // a fila (que filtra por "date(criado_em) = hoje") nunca mostra esse lead
     // de novo depois de reaberto em outro dia — ele fica escondido no sistema
@@ -376,12 +394,18 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
       .run(leadExistente.id, texto, midia_url || null, midia_tipo || null);
 
-    if (novoStatus === 'em_atendimento') {
+    if (novoStatus === 'em_atendimento' && leadExistente.vendedor_id) {
       push.notificarVendedor(leadExistente.vendedor_id, {
         titulo: `💬 ${leadExistente.nome_cliente || leadExistente.telefone}`,
         corpo: truncar(texto) || (midia_tipo ? `[${midia_tipo}]` : 'Conversa reaberta'),
         leadId: leadExistente.id,
       }).catch((err) => console.error('>> Falha ao notificar vendedor:', err.message));
+    } else if (novoStatus === 'em_atendimento') {
+      push.notificarTodosVendedores({
+        titulo: `💬 ${leadExistente.nome_cliente || leadExistente.telefone}`,
+        corpo: truncar(texto) || (midia_tipo ? `[${midia_tipo}]` : 'Conversa reaberta'),
+        leadId: leadExistente.id,
+      }).catch((err) => console.error('>> Falha ao notificar vendedores:', err.message));
     } else {
       push.notificarTodosVendedores({
         titulo: '🆕 Lead voltou pra fila',
@@ -397,7 +421,9 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   let interesse = oportunidades.length > 0 ? oportunidades.join(', ') : null;
   let boasVindas = null;
 
-  if (BOAS_VINDAS_ATIVA) {
+  // Boas-vindas automática não faz sentido pra grupo — é conversa interna
+  // (motorista, vendedor), não cliente novo chegando pela primeira vez.
+  if (BOAS_VINDAS_ATIVA && !isGrupo) {
     // Tenta gerar boas-vindas + resumo com IA de verdade; se não estiver
     // configurada (ou falhar), cai pro stub de palavra-chave (ai.js).
     const iaResposta = await claudeIA.processarNovaMensagem(texto, nome_cliente);
@@ -406,17 +432,17 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   }
 
   const insertLead = db.prepare(`
-    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse, setor_id)
-    VALUES (?, ?, ?, ?, 'novo', ?, ?)
+    INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse, setor_id, is_grupo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', interesse, setorObj.id);
+  const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', isGrupo ? 'em_atendimento' : 'novo', interesse, setorObj.id, isGrupo ? 1 : 0);
   const leadId = info.lastInsertRowid;
 
   db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'cliente', ?, ?, ?)`)
     .run(leadId, texto, midia_url || null, midia_tipo || null);
 
   push.notificarTodosVendedores({
-    titulo: '🆕 Novo lead',
+    titulo: isGrupo ? '👥 Nova mensagem em grupo' : '🆕 Novo lead',
     corpo: `${nome_cliente || telefone}: ${truncar(texto)}`,
     leadId,
   }).catch((err) => console.error('>> Falha ao notificar vendedores:', err.message));
@@ -447,7 +473,7 @@ app.post('/webhook/message', async (req, res) => {
 //   Expedição:  https://SEU-DOMINIO/webhook/zapi/expedicao
 function criarHandlerWebhookZapi(setor) {
   return async (req, res) => {
-    const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe } = zapi.interpretarWebhook(req.body);
+    const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe, isGrupo } = zapi.interpretarWebhook(req.body);
     const setorObj = db.getSetorPorSlug(setor);
 
     // fromMe: true pode ser (a) eco da mensagem que NÓS mandamos pela API,
@@ -463,12 +489,21 @@ function criarHandlerWebhookZapi(setor) {
       }
       if (telefone && texto) {
         zapi.marcarProcessada(`manual-${messageId}`);
+        // Pega a conversa mais recente desse telefone nesse setor, seja
+        // qual for o status — antes só pegava "em_atendimento", e uma
+        // resposta manual num lead ainda "novo" (ninguém puxou ainda)
+        // ficava de fora do sistema, mesmo tendo sido enviada de verdade.
         const leadAtivo = db.prepare(`
-          SELECT * FROM leads WHERE telefone = ? AND setor_id = ? AND status = 'em_atendimento' ORDER BY criado_em DESC LIMIT 1
+          SELECT * FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
         `).get(telefone, setorObj.id);
-        if (leadAtivo) {
+        if (leadAtivo && leadAtivo.status !== 'encerrado') {
           db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
             .run(leadAtivo.id, texto, midiaUrl || null, midiaTipo || null);
+          // Responder manualmente já "puxa" a conversa pra atendimento —
+          // alguém da equipe claramente já está cuidando dela.
+          if (leadAtivo.status === 'novo') {
+            db.prepare(`UPDATE leads SET status = 'em_atendimento' WHERE id = ?`).run(leadAtivo.id);
+          }
           return res.status(200).json({ info: 'mensagem manual do vendedor registrada na conversa' });
         }
       }
@@ -490,6 +525,7 @@ function criarHandlerWebhookZapi(setor) {
       midia_url: midiaUrl,
       midia_tipo: midiaTipo,
       setor,
+      isGrupo,
     });
     res.status(200).json(resultado);
   };
@@ -527,9 +563,9 @@ app.get('/api/leads/buscar', requireAuth, (req, res) => {
   // antes essa busca devolvia um resumo mais pobre e o item ficava
   // visualmente diferente do resto da lista.
   const resultado = todos
-    .filter((lead) => ehGestor(req.usuario) || lead.vendedor_id === req.usuario.id || lead.status === 'novo')
+    .filter((lead) => ehGestor(req.usuario) || lead.vendedor_id === req.usuario.id || lead.status === 'novo' || lead.is_grupo)
     .map((lead) => {
-      const dono = lead.vendedor_id === req.usuario.id;
+      const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
       const ultima = db.prepare(
         'SELECT remetente, texto, criado_em FROM mensagens WHERE lead_id = ? ORDER BY id DESC LIMIT 1'
       ).get(lead.id);
@@ -539,7 +575,7 @@ app.get('/api/leads/buscar', requireAuth, (req, res) => {
       const naoLidas = lead.visto_em
         ? db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente' AND criado_em > ?`).get(lead.id, lead.visto_em).n
         : db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente'`).get(lead.id).n;
-      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas };
+      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas, contato_salvo: Boolean(db.getContatoPorTelefone(lead.telefone)) };
     });
 
   res.json(resultado);
@@ -582,7 +618,7 @@ app.get('/api/leads', requireAuth, (req, res) => {
   }
 
   const resultado = leads.map((lead) => {
-    const dono = lead.vendedor_id === req.usuario.id;
+    const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
     const podeVerTudo = ehGestor(req.usuario) || dono || lead.status === 'novo';
 
     if (podeVerTudo) {
@@ -596,7 +632,7 @@ app.get('/api/leads', requireAuth, (req, res) => {
       const naoLidas = lead.visto_em
         ? db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente' AND criado_em > ?`).get(lead.id, lead.visto_em).n
         : db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente'`).get(lead.id).n;
-      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas };
+      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas, contato_salvo: Boolean(db.getContatoPorTelefone(lead.telefone)) };
     }
 
     // Versão restrita: só dados mínimos
@@ -622,7 +658,7 @@ app.get('/api/leads/:id', requireAuth, (req, res) => {
     return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
   }
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   const podeVer = ehGestor(req.usuario) || dono || lead.status === 'novo';
   if (!podeVer) {
     return res.status(403).json({ erro: 'este lead já está sendo atendido por outro vendedor' });
@@ -635,7 +671,7 @@ app.get('/api/leads/:id', requireAuth, (req, res) => {
     db.prepare(`UPDATE leads SET visto_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?`).run(req.params.id);
   }
 
-  res.json({ ...lead, mensagens, dono });
+  res.json({ ...lead, mensagens, dono, contato_salvo: Boolean(db.getContatoPorTelefone(lead.telefone)) });
 });
 
 // Vendedor logado "puxa" o lead pra si (não seleciona mais quem — é sempre quem está logado)
@@ -646,6 +682,9 @@ app.post('/api/leads/:id/claim', requireAuth, (req, res) => {
     return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
   }
 
+  if (lead.is_grupo) {
+    return res.status(400).json({ erro: 'conversa de grupo não tem dono — qualquer um do setor já pode responder direto' });
+  }
   if (lead.vendedor_id) {
     return res.status(409).json({ erro: 'lead já foi puxado por outro vendedor' });
   }
@@ -687,8 +726,11 @@ app.post('/api/leads/:id/transferir', requireAuth, (req, res) => {
   if (!usuarioAcessaLead(req.usuario, lead)) {
     return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
   }
+  if (lead.is_grupo) {
+    return res.status(400).json({ erro: 'conversa de grupo é de todo mundo do setor — não tem como transferir' });
+  }
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode transferir' });
   }
@@ -746,7 +788,7 @@ app.post('/api/leads/:id/encerrar', requireAuth, (req, res) => {
     return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
   }
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode encerrar' });
   }
@@ -794,7 +836,7 @@ app.post('/api/leads/:id/reabrir', requireAuth, (req, res) => {
     return res.status(400).json({ erro: 'esse lead não está encerrado' });
   }
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem atendeu (ou o admin) pode reabrir essa conversa' });
   }
@@ -820,7 +862,7 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
     return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
   }
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode responder' });
   }
@@ -936,7 +978,7 @@ app.post('/api/lembretes', requireAuth, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(lead_id);
   if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode criar tarefa nesse lead' });
   }
@@ -954,7 +996,7 @@ app.post('/api/lembretes', requireAuth, (req, res) => {
 
 // Disparo manual da análise diária (útil pra testar sem esperar 18h, ou se
 // o servidor esteve fora do ar na hora automática) — só admin.
-app.post('/api/admin/rodar-analise-diaria', requireAuth, requireGestor, async (req, res) => {
+app.post('/api/admin/rodar-analise-diaria', requireAuth, requireAdmin, async (req, res) => {
   const resultado = await agendador.rodarAnaliseDiaria();
   res.json(resultado);
 });
@@ -970,7 +1012,7 @@ app.get('/api/leads/:id/sugestao-encerramento', requireAuth, async (req, res) =>
     return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
   }
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'sem permissão pra esse lead' });
   }
@@ -991,7 +1033,7 @@ app.get('/api/leads/:id/sugestao-tarefa', requireAuth, async (req, res) => {
     return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
   }
 
-  const dono = lead.vendedor_id === req.usuario.id;
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
   if (!ehGestor(req.usuario) && !dono) {
     return res.status(403).json({ erro: 'sem permissão pra esse lead' });
   }
@@ -1278,6 +1320,19 @@ function inicioDoPeriodo(periodo) {
   return segunda.toISOString();
 }
 
+function fimDoPeriodo(periodo) {
+  const agora = new Date();
+  if (periodo === 'mes') {
+    return new Date(agora.getFullYear(), agora.getMonth() + 1, 0, 23, 59, 59);
+  }
+  const diaSemana = agora.getDay(); // 0 = domingo
+  const diffParaDomingo = diaSemana === 0 ? 0 : 7 - diaSemana;
+  const domingo = new Date(agora);
+  domingo.setDate(agora.getDate() + diffParaDomingo);
+  domingo.setHours(23, 59, 59, 0);
+  return domingo;
+}
+
 function calcularProgressoMeta(meta) {
   const desde = inicioDoPeriodo(meta.periodo);
   let atual = 0;
@@ -1292,7 +1347,10 @@ function calcularProgressoMeta(meta) {
       .get(meta.vendedor_id, desde).n;
   }
   const percentual = meta.valor_meta > 0 ? Math.min(100, Math.round((atual / meta.valor_meta) * 100)) : 0;
-  return { atual, percentual };
+  const falta = Math.max(0, meta.valor_meta - atual);
+  const fim = fimDoPeriodo(meta.periodo);
+  const diasRestantes = Math.max(0, Math.ceil((fim - new Date()) / (24 * 60 * 60 * 1000)));
+  return { atual, percentual, falta, diasRestantes };
 }
 
 app.get('/api/metas/:vendedorId', requireAuth, (req, res) => {
@@ -1302,8 +1360,8 @@ app.get('/api/metas/:vendedorId', requireAuth, (req, res) => {
   }
   const meta = db.prepare('SELECT * FROM metas WHERE vendedor_id = ?').get(vendedorId);
   if (!meta) return res.json({ meta: null });
-  const { atual, percentual } = calcularProgressoMeta(meta);
-  res.json({ meta, atual, percentual });
+  const { atual, percentual, falta, diasRestantes } = calcularProgressoMeta(meta);
+  res.json({ meta, atual, percentual, falta, diasRestantes });
 });
 
 app.post('/api/metas/:vendedorId', requireAuth, requireAdmin, (req, res) => {
@@ -1331,6 +1389,91 @@ app.post('/api/metas/:vendedorId', requireAuth, requireAdmin, (req, res) => {
 
 app.delete('/api/metas/:vendedorId', requireAuth, requireAdmin, (req, res) => {
   db.prepare('DELETE FROM metas WHERE vendedor_id = ?').run(req.params.vendedorId);
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------
+// HISTÓRICO DE RELATÓRIOS (Financeiro) — a análise diária da IA pra esse
+// setor gera 1 relatório de texto por dia (gargalo de cobrança/negociação,
+// não tarefa por lead). Só admin acessa.
+// ---------------------------------------------------------------
+app.get('/api/relatorios-financeiro', requireAuth, requireAdmin, (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+  const linhas = db.prepare(`
+    SELECT data, gerado_em FROM relatorios_financeiro WHERE setor_id = ? ORDER BY data DESC LIMIT 90
+  `).all(setorAtivo.id);
+  res.json(linhas);
+});
+
+app.get('/api/relatorios-financeiro/:data', requireAuth, requireAdmin, (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+  const relatorio = db.prepare(`
+    SELECT * FROM relatorios_financeiro WHERE setor_id = ? AND data = ?
+  `).get(setorAtivo.id, req.params.data);
+  if (!relatorio) return res.status(404).json({ erro: 'nenhum relatório encontrado pra essa data' });
+  res.json(relatorio);
+});
+
+// Gera o relatório do Financeiro na hora (mesma lógica da análise diária,
+// só que sob demanda) — usado pelo botão "Gerar Análise" quando o setor
+// ativo é Financeiro.
+app.post('/api/relatorios-financeiro/gerar-agora', requireAuth, requireAdmin, async (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro || setorAtivo.slug !== 'financeiro') {
+    return res.status(400).json({ erro: 'esse botão só existe pro setor Financeiro' });
+  }
+  if (!claudeIA.configurado) {
+    return res.status(400).json({ erro: 'IA não configurada (ANTHROPIC_API_KEY ausente)' });
+  }
+  const hojeISO = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const leadsHoje = db.prepare(`
+    SELECT DISTINCT leads.* FROM leads
+    JOIN mensagens ON mensagens.lead_id = leads.id
+    WHERE leads.setor_id = ? AND date(mensagens.criado_em) = date('now')
+  `).all(setorAtivo.id);
+
+  if (leadsHoje.length === 0) {
+    return res.status(400).json({ erro: 'nenhuma conversa com mensagem hoje nesse setor ainda' });
+  }
+
+  const conversas = leadsHoje.map((lead) => ({
+    lead,
+    mensagens: db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id),
+  })).filter((c) => c.mensagens.length > 0);
+
+  const relatorio = await claudeIA.analisarFinanceiroDiario(conversas);
+  if (!relatorio) return res.status(500).json({ erro: 'a IA não conseguiu gerar o relatório agora — tenta de novo em instantes' });
+
+  db.prepare(`
+    INSERT INTO relatorios_financeiro (setor_id, data, conteudo, gerado_em)
+    VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
+    ON CONFLICT(setor_id, data) DO UPDATE SET conteudo = excluded.conteudo, gerado_em = excluded.gerado_em
+  `).run(setorAtivo.id, hojeISO, relatorio);
+
+  res.json({ ok: true, data: hojeISO, conteudo: relatorio });
+});
+
+// ---------------------------------------------------------------
+// CONTATOS — nome de verdade por telefone, salvo pela equipe. Compartilhado
+// entre os 3 setores (é a mesma pessoa/número, independente de quem fala
+// com ela). Qualquer vendedor logado pode ver e salvar.
+// ---------------------------------------------------------------
+app.get('/api/contatos', requireAuth, (req, res) => {
+  const termo = (req.query.q || '').trim();
+  const contatos = termo
+    ? db.prepare(`SELECT * FROM contatos WHERE nome LIKE ? OR telefone LIKE ? ORDER BY nome ASC LIMIT 100`).all(`%${termo}%`, `%${termo}%`)
+    : db.prepare(`SELECT * FROM contatos ORDER BY nome ASC LIMIT 200`).all();
+  res.json(contatos);
+});
+
+app.post('/api/contatos', requireAuth, (req, res) => {
+  const { telefone, nome } = req.body;
+  if (!telefone || !nome || !nome.trim()) {
+    return res.status(400).json({ erro: 'telefone e nome são obrigatórios' });
+  }
+  db.salvarContato(telefone, nome.trim(), req.usuario.id);
   res.json({ ok: true });
 });
 

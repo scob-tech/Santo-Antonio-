@@ -82,17 +82,14 @@ function marcarProcessada(messageId) {
 // de um payload de webhook "ao receber" da Z-API. Baseado na documentação
 // oficial (developer.z-api.io/webhooks/on-message-received-examples).
 function interpretarWebhook(body) {
+  // Em grupo, o "telefone" (phone) é o ID do próprio grupo — é isso que
+  // queremos usar como identificador da conversa (1 conversa por grupo,
+  // não 1 por pessoa dentro dele). chatName é o nome do grupo; senderName
+  // é quem escreveu essa mensagem especificamente dentro do grupo.
   const telefone = body.phone || body.connectedPhone || null;
-  const nomeCliente = body.senderName || body.chatName || null;
+  const nomeCliente = body.isGroup ? (body.chatName || 'Grupo') : (body.senderName || body.chatName || null);
   const messageId = body.messageId || null;
   const fromMe = Boolean(body.fromMe);
-
-  // Ignora mensagens de GRUPO — só conversa individual (1-a-1) vira lead.
-  // Sem isso, qualquer mensagem normal num grupo do WhatsApp onde o número
-  // esteja (mesmo sem ser sobre a loja) criaria um lead por engano.
-  if (body.isGroup) {
-    return { telefone: null, nomeCliente, texto: null, midiaUrl: null, midiaTipo: null, messageId, fromMe };
-  }
 
   let texto = null;
   let midiaUrl = null;
@@ -142,7 +139,15 @@ function interpretarWebhook(body) {
     console.log('>> Webhook Z-API com formato não reconhecido, payload completo:', JSON.stringify(body));
   }
 
-  return { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe };
+  // Numa conversa de grupo, várias pessoas diferentes escrevem na MESMA
+  // conversa — sem identificar quem é quem, fica impossível saber quem
+  // pediu o quê. senderName é o participante que mandou essa mensagem
+  // específica (diferente de chatName, que é o nome do grupo todo).
+  if (body.isGroup && texto && !fromMe && body.senderName) {
+    texto = `*${body.senderName}:*\n${texto}`;
+  }
+
+  return { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe, isGrupo: Boolean(body.isGroup) };
 }
 
 // Rastreia messageIds das mensagens que NÓS mandamos via API — assim,

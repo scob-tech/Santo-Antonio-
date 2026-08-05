@@ -109,6 +109,32 @@ db.exec(`
     definida_em TEXT NOT NULL,
     FOREIGN KEY (vendedor_id) REFERENCES vendedores(id)
   );
+
+  -- Relatório de gargalo do Financeiro — a análise diária da IA, pra esse
+  -- setor especificamente, não gera tarefa por lead como em Vendas: gera
+  -- 1 relatório de texto por dia, guardado aqui pra o admin ver na hora
+  -- e also poder consultar dias antigos depois (histórico de relatórios).
+  CREATE TABLE IF NOT EXISTS relatorios_financeiro (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    setor_id INTEGER NOT NULL,
+    data TEXT NOT NULL,       -- YYYY-MM-DD
+    conteudo TEXT NOT NULL,
+    gerado_em TEXT NOT NULL,
+    UNIQUE(setor_id, data)
+  );
+
+  -- Contato salvo de verdade (nome escolhido pela equipe), por telefone —
+  -- compartilhado entre os 3 setores, já que é o mesmo número de WhatsApp
+  -- de verdade independente de quem está conversando com ele. Enquanto um
+  -- telefone não tem linha aqui, o nome exibido é só o que veio do
+  -- WhatsApp (push name), e a conversa mostra o botão "Salvar contato".
+  CREATE TABLE IF NOT EXISTS contatos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telefone TEXT NOT NULL UNIQUE,
+    nome TEXT NOT NULL,
+    criado_por INTEGER,
+    criado_em TEXT NOT NULL
+  );
 `);
 
 // ---------------------------------------------------------------
@@ -210,6 +236,11 @@ if (!colunaExiste('leads', 'encerrado_em')) {
   db.exec(`ALTER TABLE leads ADD COLUMN encerrado_em TEXT`);
   db.exec(`UPDATE leads SET encerrado_em = COALESCE(convertido_em, criado_em) WHERE status = 'encerrado' AND encerrado_em IS NULL`);
 }
+// Conversa de grupo não tem "dono" — é de todo mundo do setor, ninguém
+// precisa (nem pode) puxar ela como se fosse um lead individual.
+if (!colunaExiste('leads', 'is_grupo')) {
+  db.exec(`ALTER TABLE leads ADD COLUMN is_grupo INTEGER NOT NULL DEFAULT 0`);
+}
 
 // ---------------------------------------------------------------
 // SETORES: cria os 3 setores padrão (se ainda não existirem) e faz o
@@ -304,4 +335,21 @@ module.exports.getTodosSetores = function () {
 
 module.exports.getSetorPorSlug = function (slug) {
   return db.prepare(`SELECT id, slug, nome FROM setores WHERE slug = ?`).get(slug);
+};
+
+module.exports.getContatoPorTelefone = function (telefone) {
+  return db.prepare(`SELECT * FROM contatos WHERE telefone = ?`).get(telefone);
+};
+
+// Salva (ou atualiza) o nome de um contato, e já atualiza o nome exibido
+// em todo lead existente com esse telefone — sem isso, a conversa
+// continuaria mostrando o nome antigo (do WhatsApp) ao lado do nome novo
+// salvo, dando a impressão de "duplicado".
+module.exports.salvarContato = function (telefone, nome, criadoPor) {
+  db.prepare(`
+    INSERT INTO contatos (telefone, nome, criado_por, criado_em)
+    VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
+    ON CONFLICT(telefone) DO UPDATE SET nome = excluded.nome
+  `).run(telefone, nome, criadoPor || null);
+  db.prepare(`UPDATE leads SET nome_cliente = ? WHERE telefone = ?`).run(nome, telefone);
 };

@@ -46,13 +46,21 @@ async function rodarAnaliseDiaria() {
   const encerradosClassificados = [];
   const tarefasCriadas = [];
   const leadsEsquecidos = [];
+  let relatorioFinanceiroGerado = false;
+
+  const setorFinanceiro = db.getSetorPorSlug('financeiro');
 
   // 0) Conversas ENCERRADAS ainda sem resultado definido: a IA lê e decide
   // sozinha se converteu/perdeu, valor e motivo — sem confirmação humana
   // (decisão explícita do Silvio, com o trade-off já discutido: agiliza o
   // encerramento no dia a dia, mas confia no julgamento da IA pro dado
   // financeiro do relatório).
-  const encerradosPendentes = db.prepare(`SELECT * FROM leads WHERE status = 'encerrado' AND resultado IS NULL`).all();
+  // "Convertido/perdido" é conceito de VENDA — não se aplica ao Financeiro
+  // (cobrança/negociação), por isso ele fica de fora daqui.
+  const encerradosPendentes = db.prepare(`
+    SELECT * FROM leads WHERE status = 'encerrado' AND resultado IS NULL
+    AND (setor_id != ? OR setor_id IS NULL)
+  `).all(setorFinanceiro ? setorFinanceiro.id : -1);
   for (const lead of encerradosPendentes) {
     const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id);
     if (mensagens.length === 0) continue;
@@ -103,7 +111,10 @@ async function rodarAnaliseDiaria() {
   // 0.5) Vendas que o vendedor já confirmou na hora (encerrar → "Fechou o
   // pedido") mas sem informar valor — a IA lê a conversa só pra estimar
   // o valor, sem mexer no resultado (isso já foi decidido pelo humano).
-  const vendasSemValor = db.prepare(`SELECT * FROM leads WHERE resultado = 'convertido' AND valor_venda IS NULL`).all();
+  const vendasSemValor = db.prepare(`
+    SELECT * FROM leads WHERE resultado = 'convertido' AND valor_venda IS NULL
+    AND (setor_id != ? OR setor_id IS NULL)
+  `).all(setorFinanceiro ? setorFinanceiro.id : -1);
   for (const lead of vendasSemValor) {
     const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id);
     if (mensagens.length === 0) continue;
@@ -116,7 +127,10 @@ async function rodarAnaliseDiaria() {
   }
 
   // 1) Conversas em aberto: IA procura gargalo + oportunidade de complementar
-  const leadsAbertos = db.prepare(`SELECT * FROM leads WHERE status = 'em_atendimento'`).all();
+  // (Financeiro fica de fora — ganha a análise própria no bloco 1.5, logo abaixo)
+  const leadsAbertos = db.prepare(`
+    SELECT * FROM leads WHERE status = 'em_atendimento' AND (setor_id != ? OR setor_id IS NULL)
+  `).all(setorFinanceiro ? setorFinanceiro.id : -1);
 
   for (const lead of leadsAbertos) {
     const mensagens = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id);
@@ -152,6 +166,35 @@ async function rodarAnaliseDiaria() {
     }
   }
 
+  // 1.5) FINANCEIRO — não gera tarefa por lead: varre TODAS as conversas
+  // do setor com atividade hoje (aberta ou encerrada) e escreve 1
+  // relatório só, apontando gargalo de cobrança/negociação, pro admin ler.
+  if (setorFinanceiro) {
+    const hojeISO = agoraBRT().dataISO;
+    const leadsFinanceiroHoje = db.prepare(`
+      SELECT DISTINCT leads.* FROM leads
+      JOIN mensagens ON mensagens.lead_id = leads.id
+      WHERE leads.setor_id = ? AND date(mensagens.criado_em) = date('now')
+    `).all(setorFinanceiro.id);
+
+    if (leadsFinanceiroHoje.length > 0) {
+      const conversas = leadsFinanceiroHoje.map((lead) => ({
+        lead,
+        mensagens: db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id),
+      })).filter((c) => c.mensagens.length > 0);
+
+      const relatorio = await claudeIA.analisarFinanceiroDiario(conversas);
+      if (relatorio) {
+        db.prepare(`
+          INSERT INTO relatorios_financeiro (setor_id, data, conteudo, gerado_em)
+          VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
+          ON CONFLICT(setor_id, data) DO UPDATE SET conteudo = excluded.conteudo, gerado_em = excluded.gerado_em
+        `).run(setorFinanceiro.id, hojeISO, relatorio);
+        relatorioFinanceiroGerado = true;
+      }
+    }
+  }
+
   // 2) Leads 'novo' que ninguém puxou o dia inteiro — vira alerta pro admin
   // (checagem simples, sem IA: se ninguém pegou, não tem conversa pra analisar)
   const admin = db.prepare(`SELECT id FROM vendedores WHERE role = 'admin' LIMIT 1`).get();
@@ -179,7 +222,7 @@ async function rodarAnaliseDiaria() {
     }
   }
 
-  console.log(`>> Análise diária concluída: ${leadsAbertos.length} conversas em aberto revisadas, ${encerradosClassificados.length} encerrada(s) classificada(s), ${tarefasCriadas.length} tarefa(s) criada(s).`);
+  console.log(`>> Análise diária concluída: ${leadsAbertos.length} conversas em aberto revisadas, ${encerradosClassificados.length} encerrada(s) classificada(s), ${tarefasCriadas.length} tarefa(s) criada(s)${relatorioFinanceiroGerado ? ', relatório do Financeiro gerado' : ''}.`);
   return {
     rodou: true,
     conversas_revisadas: leadsAbertos.length,
@@ -188,6 +231,7 @@ async function rodarAnaliseDiaria() {
     encerrados_classificados: encerradosClassificados,
     tarefas_criadas: tarefasCriadas,
     leads_esquecidos: leadsEsquecidos,
+    relatorio_financeiro_gerado: relatorioFinanceiroGerado,
   };
 }
 

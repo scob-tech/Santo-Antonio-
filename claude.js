@@ -118,4 +118,44 @@ Seja conservador: só marque existe:true quando for bem claro pela conversa, pra
   return extrairJSON(resposta);
 }
 
-module.exports = { processarNovaMensagem, analisarConversa, sugerirTarefa, analisarDiaria, configurado };
+// Formata mensagens COM horário — a análise do Financeiro precisa saber
+// quanto tempo passou entre "cliente pediu" e "equipe respondeu", então
+// aqui (diferente de formatarTranscricao) o horário de cada mensagem vai
+// junto, pro Claude conseguir calcular esse intervalo sozinho.
+function formatarTranscricaoComHorario(mensagens) {
+  return mensagens
+    .map((m) => {
+      const hora = new Date(m.criado_em + (m.criado_em.includes('Z') ? '' : 'Z'))
+        .toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const quem = m.remetente === 'cliente' ? 'Cliente' : m.remetente === 'vendedor' ? 'Financeiro' : 'IA';
+      return `[${hora}] ${quem}: ${m.texto}`;
+    })
+    .join('\n');
+}
+
+// Varredura diária do FINANCEIRO — bem diferente da análise do Vendas:
+// em vez de olhar 1 conversa por vez e gerar tarefa individual, olha
+// TODAS as conversas do dia de uma vez e escreve 1 relatório só, pro
+// admin ler, apontando gargalo de negociação/cobrança (demora pra
+// mandar PIX, acordo travado, ponto fraco na comunicação). Não grava
+// nada na conversa nem cria tarefa — só texto de relatório mesmo.
+async function analisarFinanceiroDiario(conversas) {
+  if (!configurado || conversas.length === 0) return null;
+
+  const system = `Você é um analista de operações do setor Financeiro de uma loja de material de construção (Depósito Santo Antônio). Vai receber TODAS as conversas de WhatsApp do Financeiro de um dia — cobrança, negociação de pagamento, envio de boleto/PIX, emissão de nota fiscal.
+
+Sua tarefa é escrever um relatório de gargalos operacionais, olhando especificamente:
+1. TEMPO DE RESPOSTA PRO PIX/PAGAMENTO: toda vez que um cliente pediu chave PIX, boleto ou dados de pagamento, calcule quanto tempo a equipe demorou pra responder (os horários de cada mensagem estão marcados entre colchetes). Aponte os casos mais demorados, citando o nome do cliente e o tempo.
+2. NEGOCIAÇÕES/ACORDOS TRAVADOS: cobranças ou negociações que ficaram paradas, sem fechamento, ou que o cliente ficou esperando retorno.
+3. PONTOS FRACOS DE NEGOCIAÇÃO: qualquer padrão que pareça atrapalhar o fechamento (resposta confusa, falta de firmeza na cobrança, informação incompleta).
+
+Escreva em português, texto simples corrido (SEM markdown, SEM asteriscos, SEM #), organizado em 3 blocos com esses títulos exatos em maiúsculo seguidos de dois-pontos: "TEMPO DE RESPOSTA:", "NEGOCIAÇÕES TRAVADAS:" e "PONTOS FRACOS:". Dentro de cada bloco, liste os casos encontrados citando o nome do cliente, um por linha começando com "- ". Se não achar nada relevante num bloco, escreva "Nada digno de nota hoje." nele. Seja direto, específico e cite tempos/nomes reais — não invente conversa que não está no material.`;
+
+  const userMsg = conversas
+    .map(({ lead, mensagens }) => `=== Conversa com ${lead.nome_cliente || lead.telefone} ===\n${formatarTranscricaoComHorario(mensagens)}`)
+    .join('\n\n');
+
+  return chamarClaude(system, userMsg, 1200);
+}
+
+module.exports = { processarNovaMensagem, analisarConversa, sugerirTarefa, analisarDiaria, analisarFinanceiroDiario, configurado };
