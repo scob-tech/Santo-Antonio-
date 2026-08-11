@@ -848,7 +848,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
 .conversa-modal-footer { padding: 14px 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .conversa-modal-reply { display: flex; gap: 10px; align-items: flex-end; }
 .conversa-modal-input {
-  flex: 1; padding: 12px 16px; border: 1px solid var(--border); border-radius: 18px;
+  width: 100%; box-sizing: border-box; padding: 12px 16px; border: 1px solid var(--border); border-radius: 18px;
   font-size: 15px; font-family: 'Inter', sans-serif; background: var(--card); color: var(--text);
   resize: none; overflow-y: auto; max-height: 320px; min-height: 46px; line-height: 1.45;
 }
@@ -1403,7 +1403,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
             <button type="button" class="icon-btn" title="Tirar foto" onclick="document.getElementById('conversa-camera').click()">📷</button>
             <input type="file" id="conversa-camera" style="display:none;" onchange="selecionarAnexo(event)" accept="image/*" capture="environment" />
             <button type="button" class="icon-btn" id="btn-audio" title="Gravar áudio" onclick="alternarGravacaoAudio()">🎤</button>
-            <div style="flex:1; position:relative;">
+            <div style="flex:1; min-width:0; position:relative;">
               <div id="conversa-mencoes-dropdown" style="display:none; position:absolute; bottom:100%; left:0; right:0; margin-bottom:6px; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.12); max-height:160px; overflow-y:auto; z-index:5;"></div>
               <textarea id="conversa-texto" class="conversa-modal-input" rows="2" placeholder="Digite uma mensagem... (Shift+Enter pra quebrar linha)" autocomplete="off" oninput="aoDigitarMensagem(this)" onkeydown="aoTeclarMensagem(event)"></textarea>
             </div>
