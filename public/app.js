@@ -1072,10 +1072,8 @@ async function alternarGravacaoAudio() {
       const blob = new Blob(pedacosAudio, { type: 'audio/webm' });
       const leitor = new FileReader();
       leitor.onload = () => {
-        anexoSelecionado = { dataUri: leitor.result, tipo: 'audio', nome: 'audio.webm' };
-        const preview = document.getElementById('conversa-anexo-preview');
-        preview.style.display = 'flex';
-        preview.innerHTML = `🎤 Áudio gravado <button class="link-mini" onclick="removerAnexo()" style="margin-left:auto;">Remover</button>`;
+        anexosSelecionados.push({ dataUri: leitor.result, tipo: 'audio', nome: 'audio.webm' });
+        renderizarPreviewAnexos();
       };
       leitor.readAsDataURL(blob);
       gravando = false;
@@ -2062,18 +2060,13 @@ async function atualizarConversaAberta() {
   const tinhaAntes = leadConversaAtual.mensagens ? leadConversaAtual.mensagens.length : 0;
   const temAgora = atualizado.mensagens ? atualizado.mensagens.length : 0;
   if (temAgora !== tinhaAntes || atualizado.status !== leadConversaAtual.status) {
-    const rascunho = document.getElementById('conversa-texto').value;
-    const anexoAtual = anexoSelecionado;
-    const previewAtual = document.getElementById('conversa-anexo-preview').innerHTML;
+    const campoTexto = document.getElementById('conversa-texto');
+    const rascunho = campoTexto.value;
     leadConversaAtual = atualizado;
     renderizarConversa(atualizado);
-    document.getElementById('conversa-texto').value = rascunho;
-    if (anexoAtual) {
-      anexoSelecionado = anexoAtual;
-      const preview = document.getElementById('conversa-anexo-preview');
-      preview.style.display = 'flex';
-      preview.innerHTML = previewAtual;
-    }
+    campoTexto.value = rascunho;
+    ajustarAlturaTextarea(campoTexto);
+    renderizarPreviewAnexos(); // os anexos já selecionados (anexosSelecionados) continuam os mesmos, só repinta a prévia
   }
 }
 
@@ -2084,7 +2077,9 @@ async function atualizarTudo() {
   await carregarLembretes();
   await carregarMinhaMeta();
   if (abaAgendaAtual !== 'pendentes') await atualizarContadorPendentesAgenda();
-  await atualizarConversaAberta();
+  // atualizarConversaAberta() não roda mais aqui — tem o próprio intervalo,
+  // mais rápido, pra quem está de olho numa conversa não sentir demora
+  // esperando o resto da tela (vendedores/leads/lembretes) atualizar junto.
 }
 
 // ---------------- Notificação push ----------------
@@ -2255,4 +2250,5 @@ function fecharMenuMobile() {
   atualizarTudo();
   abrirLeadDaUrlSeTiver();
   setInterval(atualizarTudo, 3000); // atualiza sozinho a cada 3s (depois trocamos por realtime)
+  setInterval(atualizarConversaAberta, 1000); // conversa aberta atualiza mais rápido — é o que a pessoa está de olho na hora
 })();
