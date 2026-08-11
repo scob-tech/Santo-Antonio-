@@ -221,6 +221,11 @@ if (!colunaExiste('mensagens', 'editada')) {
 if (!colunaExiste('mensagens', 'apagada')) {
   db.exec(`ALTER TABLE mensagens ADD COLUMN apagada INTEGER NOT NULL DEFAULT 0`);
 }
+// ID da mensagem lá na Z-API/WhatsApp — precisa disso pra conseguir citar
+// ("responder") de verdade no WhatsApp do cliente, não só aqui dentro.
+if (!colunaExiste('mensagens', 'zapi_message_id')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN zapi_message_id TEXT`);
+}
 // marca quando o dono (ou gestor) abriu a conversa pela última vez —
 // alimenta o badge de "mensagem não lida" nas Conversas Ativas
 if (!colunaExiste('leads', 'visto_em')) {

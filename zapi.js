@@ -171,7 +171,7 @@ function registrarComoEnviadaPorNos(messageId) {
 // Manda uma mensagem de texto de verdade pro WhatsApp do cliente.
 // Não lança erro pro chamador — só loga — pra nunca travar o fluxo interno
 // (salvar no banco) por causa de uma falha externa da Z-API.
-async function enviarMensagemWhatsapp(telefone, texto, setor = 'vendas') {
+async function enviarMensagemWhatsapp(telefone, texto, setor = 'vendas', citarMessageId = null) {
   const cred = CREDENCIAIS_POR_SETOR[setor];
   if (!configuradoPara(setor)) {
     console.log(`>> [Z-API "${setor}" não configurada] mensagem NÃO enviada de verdade pra ${telefone}: "${texto}"`);
@@ -181,13 +181,11 @@ async function enviarMensagemWhatsapp(telefone, texto, setor = 'vendas') {
   const url = `https://api.z-api.io/instances/${cred.instanceId}/token/${cred.token}/send-text`;
   const headers = { 'Content-Type': 'application/json' };
   if (cred.clientToken) headers['Client-Token'] = cred.clientToken;
+  const body = { phone: telefone, message: texto };
+  if (citarMessageId) body.messageId = citarMessageId; // "responder" de verdade no WhatsApp
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ phone: telefone, message: texto }),
-    });
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
     if (!res.ok) {
       const erro = await res.text().catch(() => '');
       console.error(`>> Falha ao enviar mensagem via Z-API [${setor}] (status ${res.status}): ${erro}`);
@@ -195,7 +193,7 @@ async function enviarMensagemWhatsapp(telefone, texto, setor = 'vendas') {
     }
     const data = await res.json().catch(() => null);
     if (data && data.messageId) registrarComoEnviadaPorNos(data.messageId);
-    return { enviado: true };
+    return { enviado: true, messageId: data ? data.messageId : null };
   } catch (err) {
     console.error(`>> Erro de rede ao chamar a Z-API [${setor}]:`, err.message);
     return { enviado: false, motivo: 'erro_rede' };
@@ -206,7 +204,7 @@ async function enviarMensagemWhatsapp(telefone, texto, setor = 'vendas') {
 // do cliente. Aceita tanto link quanto Base64 (a Z-API aceita os dois —
 // usamos Base64 aqui porque o arquivo vem direto do navegador do vendedor,
 // sem precisar hospedar em lugar nenhum antes).
-async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, legenda, setor = 'vendas') {
+async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, legenda, setor = 'vendas', citarMessageId = null) {
   const cred = CREDENCIAIS_POR_SETOR[setor];
   if (!configuradoPara(setor)) {
     console.log(`>> [Z-API "${setor}" não configurada] mídia (${midiaTipo}) NÃO enviada de verdade pra ${telefone}`);
@@ -233,6 +231,7 @@ async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, le
     url = `${base}/send-document/${extensao}`;
     body = { phone: telefone, document: dataUri, fileName: nomeArquivo || `arquivo.${extensao}`, caption: legenda || '' };
   }
+  if (citarMessageId) body.messageId = citarMessageId;
 
   try {
     const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -243,7 +242,7 @@ async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, le
     }
     const data = await res.json().catch(() => null);
     if (data && data.messageId) registrarComoEnviadaPorNos(data.messageId);
-    return { enviado: true };
+    return { enviado: true, messageId: data ? data.messageId : null };
   } catch (err) {
     console.error(`>> Erro de rede ao enviar mídia pela Z-API [${setor}]:`, err.message);
     return { enviado: false, motivo: 'erro_rede' };
