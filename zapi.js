@@ -90,6 +90,11 @@ function interpretarWebhook(body) {
   const nomeCliente = body.isGroup ? (body.chatName || 'Grupo') : (body.senderName || body.chatName || null);
   const messageId = body.messageId || null;
   const fromMe = Boolean(body.fromMe);
+  // Quando alguém responde ("cita") uma mensagem direto pelo WhatsApp (não
+  // pelo nosso sistema), a Z-API manda o ID da mensagem original aqui —
+  // é isso que permite a citação aparecer certinho mesmo quando a
+  // resposta não veio de dentro do nosso painel.
+  const referenceMessageId = body.referenceMessageId || null;
 
   let texto = null;
   let midiaUrl = null;
@@ -147,7 +152,7 @@ function interpretarWebhook(body) {
     texto = `*${body.senderName}:*\n${texto}`;
   }
 
-  return { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe, isGrupo: Boolean(body.isGroup) };
+  return { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe, isGrupo: Boolean(body.isGroup), referenceMessageId };
 }
 
 // Rastreia messageIds das mensagens que NÓS mandamos via API — assim,

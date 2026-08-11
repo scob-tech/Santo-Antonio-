@@ -342,7 +342,7 @@ function truncar(texto, tamanho = 100) {
   return texto.length > tamanho ? texto.slice(0, tamanho - 1) + '…' : texto;
 }
 
-async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo, setor = 'vendas', isGrupo = false, zapiMessageId = null }) {
+async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo, setor = 'vendas', isGrupo = false, zapiMessageId = null, zapiReferenceMessageId = null }) {
   const setorObj = db.getSetorPorSlug(setor) || db.getSetorPorSlug('vendas');
 
   // Normaliza só telefone de conversa individual — o "telefone" de um
@@ -356,14 +356,24 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   const contatoSalvo = !isGrupo ? db.getContatoPorTelefone(telefone) : null;
   if (contatoSalvo) nome_cliente = contatoSalvo.nome;
 
+  // Se essa mensagem é uma resposta a outra (a pessoa citou/respondeu
+  // direto no WhatsApp, não pelo nosso sistema), resolve pro ID interno
+  // da mensagem original — é o que faz a citação aparecer certinho aqui
+  // dentro também, não só quando a resposta parte do nosso painel.
+  let respondeAResolvido = null;
+  if (zapiReferenceMessageId) {
+    const original = db.prepare('SELECT id FROM mensagens WHERE zapi_message_id = ?').get(zapiReferenceMessageId);
+    if (original) respondeAResolvido = original.id;
+  }
+
   const leadExistente = db.prepare(`
     SELECT * FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
   `).get(telefone, setorObj.id);
 
   if (leadExistente && leadExistente.status !== 'encerrado') {
     // Conversa já em aberto (novo ou em_atendimento) — só adiciona a mensagem
-    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, zapi_message_id) VALUES (?, 'cliente', ?, ?, ?, ?)`)
-      .run(leadExistente.id, texto, midia_url || null, midia_tipo || null, zapiMessageId);
+    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, zapi_message_id, responde_a) VALUES (?, 'cliente', ?, ?, ?, ?, ?)`)
+      .run(leadExistente.id, texto, midia_url || null, midia_tipo || null, zapiMessageId, respondeAResolvido);
 
     // Notifica só se já tem dono — se ainda tá "novo" esperando alguém
     // puxar, já mandou push na criação; não fica reenviando a cada
@@ -396,8 +406,8 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     } else {
       db.prepare(`UPDATE leads SET status = ? WHERE id = ?`).run(novoStatus, leadExistente.id);
     }
-    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, zapi_message_id) VALUES (?, 'cliente', ?, ?, ?, ?)`)
-      .run(leadExistente.id, texto, midia_url || null, midia_tipo || null, zapiMessageId);
+    db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, zapi_message_id, responde_a) VALUES (?, 'cliente', ?, ?, ?, ?, ?)`)
+      .run(leadExistente.id, texto, midia_url || null, midia_tipo || null, zapiMessageId, respondeAResolvido);
 
     if (novoStatus === 'em_atendimento' && leadExistente.vendedor_id) {
       push.notificarVendedor(leadExistente.vendedor_id, {
@@ -443,8 +453,8 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   const info = insertLead.run(telefone, nome_cliente || null, texto, origem || 'geral', isGrupo ? 'em_atendimento' : 'novo', interesse, setorObj.id, isGrupo ? 1 : 0);
   const leadId = info.lastInsertRowid;
 
-  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, zapi_message_id) VALUES (?, 'cliente', ?, ?, ?, ?)`)
-    .run(leadId, texto, midia_url || null, midia_tipo || null, zapiMessageId);
+  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, zapi_message_id, responde_a) VALUES (?, 'cliente', ?, ?, ?, ?, ?)`)
+    .run(leadId, texto, midia_url || null, midia_tipo || null, zapiMessageId, respondeAResolvido);
 
   push.notificarTodosVendedores({
     titulo: isGrupo ? '👥 Nova mensagem em grupo' : '🆕 Novo lead',
@@ -478,7 +488,7 @@ app.post('/webhook/message', async (req, res) => {
 //   Expedição:  https://SEU-DOMINIO/webhook/zapi/expedicao
 function criarHandlerWebhookZapi(setor) {
   return async (req, res) => {
-    const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe, isGrupo } = zapi.interpretarWebhook(req.body);
+    const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe, isGrupo, referenceMessageId } = zapi.interpretarWebhook(req.body);
     const setorObj = db.getSetorPorSlug(setor);
 
     // fromMe: true pode ser (a) eco da mensagem que NÓS mandamos pela API,
@@ -546,6 +556,7 @@ function criarHandlerWebhookZapi(setor) {
       setor,
       isGrupo,
       zapiMessageId: messageId,
+      zapiReferenceMessageId: referenceMessageId,
     });
     res.status(200).json(resultado);
   };
