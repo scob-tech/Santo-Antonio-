@@ -213,7 +213,9 @@ async function analisarPersonalizado(conversas, instrucao) {
 
 Sua tarefa é responder EXATAMENTE à instrução da gestão, baseando-se SOMENTE no que está escrito nas conversas. Seja específico e concreto: cite nomes de clientes, valores, descontos, tempos de resposta e trechos reais sempre que ajudarem a sustentar o que você afirma. Nunca invente conversa, número ou fato que não esteja no material. Se a instrução pedir algo que as conversas não permitem responder, diga isso com honestidade em vez de inventar.
 
-Escreva em português, texto corrido e organizado, SEM markdown (sem #, sem asteriscos de negrito, sem tabela). Pode usar títulos curtos em MAIÚSCULO seguidos de dois-pontos, e listar casos começando a linha com "- ". Comece com um resumo direto de 1 a 2 frases respondendo à pergunta e, depois, detalhe com os casos e evidências que você encontrou.`;
+Escreva em português, texto corrido e organizado, SEM markdown (sem #, sem asteriscos de negrito, sem tabela). Pode usar títulos curtos em MAIÚSCULO seguidos de dois-pontos, e listar casos começando a linha com "- ". Comece com um resumo direto de 1 a 2 frases respondendo à pergunta e, depois, detalhe com os casos e evidências que você encontrou.
+
+Priorize os casos MAIS relevantes e agrupe por tema, em vez de listar exaustivamente toda conversa — vale mais um relatório completo e bem concluído do que uma lista longa cortada no meio. SEMPRE termine o raciocínio: não deixe frase nem tópico pela metade, e feche com uma conclusão curta.`;
 
   const transcricao = (mensagens) => mensagens
     .map((m) => {
@@ -234,7 +236,7 @@ Escreva em português, texto corrido e organizado, SEM markdown (sem #, sem aste
       })
       .join('\n\n');
 
-  const { texto, erro } = await chamarClaudeComMotivo(system, userMsg, 1500);
+  const { texto, erro } = await chamarClaudeComMotivo(system, userMsg, 4000);
   if (!texto) return { erro: erro || 'a IA não conseguiu gerar a análise agora — tenta de novo em instantes.' };
   return { conteudo: texto };
 }
