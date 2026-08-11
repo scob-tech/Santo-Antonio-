@@ -940,6 +940,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
                   style="width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-family:'Inter',sans-serif; font-size:13px; resize:vertical; background:var(--card); color:var(--text);"></textarea>
                 <div style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
                   <button class="btn-primary btn-small" id="btn-analise-custom" onclick="rodarAnalisePersonalizada()">🔎 Analisar</button>
+                  <button class="btn-ghost btn-small" id="btn-historico-analises" onclick="abrirHistoricoAnalises()">📚 Histórico de análises</button>
                   <span style="font-size:11.5px; color:var(--muted);">Ex.: "quanto de desconto os vendedores estão dando" · "quais objeções mais aparecem"</span>
                 </div>
               </div>
@@ -1365,6 +1366,26 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
       </div>
       <div class="modal-actions" style="margin-top:14px;">
         <button class="cancelar" onclick="fecharModal('modal-historico-relatorios')" style="flex:1;">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: histórico de análises sob medida (lista = data + pergunta) -->
+  <div class="modal-overlay" id="modal-historico-analises">
+    <div class="modal-box" style="max-width:780px; width:92vw; display:flex; flex-direction:column; max-height:85vh;">
+      <h3>📚 Histórico de análises</h3>
+      <p id="historico-analises-setor" style="font-size:12.5px; color:var(--muted); margin-top:-8px; margin-bottom:14px;"></p>
+      <div style="display:flex; gap:16px; flex:1; min-height:0;">
+        <div style="width:240px; flex-shrink:0; overflow-y:auto; border-right:1px solid var(--border); padding-right:12px;">
+          <div id="historico-analises-lista"></div>
+        </div>
+        <div style="flex:1; min-width:0; overflow-y:auto;">
+          <div id="historico-analises-pergunta" style="font-weight:700; color:var(--navy); font-size:13.5px; margin-bottom:10px;"></div>
+          <div id="historico-analises-conteudo" style="white-space:pre-wrap; font-size:13px; line-height:1.6; color:var(--text);"></div>
+        </div>
+      </div>
+      <div class="modal-actions" style="margin-top:14px;">
+        <button class="cancelar" onclick="fecharModal('modal-historico-analises')" style="flex:1;">Fechar</button>
       </div>
     </div>
   </div>

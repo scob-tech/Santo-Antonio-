@@ -135,6 +135,21 @@ db.exec(`
     criado_por INTEGER,
     criado_em TEXT NOT NULL
   );
+
+  -- Histórico das "Análises sob medida" (pedido da gestão). Diferente do
+  -- relatorios_financeiro (1 por dia, automático), aqui cada análise que o
+  -- admin roda fica guardada com a PERGUNTA que ele escreveu e o texto
+  -- completo que a IA respondeu. Vale pros TRÊS setores (a lista é sempre
+  -- filtrada pelo setor). A tela mostra só data + pergunta; o conteúdo
+  -- inteiro só aparece quando clica pra abrir.
+  CREATE TABLE IF NOT EXISTS analises_personalizadas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    setor_id INTEGER NOT NULL,
+    instrucao TEXT NOT NULL,
+    conteudo TEXT NOT NULL,
+    criado_por INTEGER,
+    gerado_em TEXT NOT NULL
+  );
 `);
 
 // ---------------------------------------------------------------

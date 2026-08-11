@@ -784,6 +784,58 @@ async function rodarAnalisePersonalizada() {
   }
 }
 
+// Histórico de análises sob medida do setor ativo. A lista mostra só a
+// DATA + a PERGUNTA que foi feita; o relatório completo só aparece quando
+// o admin clica no item. Vale pros dois setores (Vendas e Financeiro).
+async function abrirHistoricoAnalises() {
+  const res = await fetch(`${API}/api/analises-personalizadas?setor=${setorAtivo}`);
+  if (!res.ok) { alert('Erro ao carregar o histórico de análises.'); return; }
+  const itens = await res.json();
+  const nomeSetor = NOMES_SETOR[setorAtivo] || setorAtivo;
+  document.getElementById('historico-analises-setor').textContent =
+    `Setor ${nomeSetor} — clique numa análise pra ler o relatório completo.`;
+  const listaEl = document.getElementById('historico-analises-lista');
+  const pergEl = document.getElementById('historico-analises-pergunta');
+  const contEl = document.getElementById('historico-analises-conteudo');
+
+  if (itens.length === 0) {
+    listaEl.innerHTML = `<div class="empty-state" style="font-size:12px;">Nenhuma análise salva nesse setor ainda.</div>`;
+    pergEl.textContent = '';
+    contEl.textContent = '';
+    abrirModal('modal-historico-analises');
+    return;
+  }
+
+  listaEl.innerHTML = itens.map((a) => {
+    const d = new Date(a.gerado_em + (a.gerado_em.includes('Z') ? '' : 'Z'));
+    const data = d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `<button class="link-mini historico-analise-item" data-id="${a.id}" onclick="carregarConteudoAnalise(${a.id})"
+      style="display:block; width:100%; text-align:left; padding:8px; border-radius:6px; margin-bottom:4px; line-height:1.35;">
+      <span style="color:var(--muted); display:block; font-size:11px;">${data}</span>
+      <span style="color:var(--text); font-weight:600; font-size:12.5px;">${escapeHtml(a.instrucao)}</span>
+    </button>`;
+  }).join('');
+
+  abrirModal('modal-historico-analises');
+  carregarConteudoAnalise(itens[0].id);
+}
+
+async function carregarConteudoAnalise(id) {
+  document.querySelectorAll('.historico-analise-item').forEach((b) => {
+    b.style.background = String(b.dataset.id) === String(id) ? 'var(--navy-bg)' : 'none';
+  });
+  const pergEl = document.getElementById('historico-analises-pergunta');
+  const contEl = document.getElementById('historico-analises-conteudo');
+  contEl.textContent = 'Carregando...';
+  pergEl.textContent = '';
+  const res = await fetch(`${API}/api/analises-personalizadas/${id}?setor=${setorAtivo}`);
+  if (!res.ok) { contEl.textContent = 'Análise não encontrada.'; return; }
+  const a = await res.json();
+  const d = new Date(a.gerado_em + (a.gerado_em.includes('Z') ? '' : 'Z'));
+  pergEl.textContent = `"${a.instrucao}"  ·  ${d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+  contEl.textContent = a.conteudo;
+}
+
 function copiarAnaliseCustom() {
   const txt = document.getElementById('analise-custom-conteudo').textContent || '';
   const btn = document.getElementById('btn-copiar-analise-custom');

@@ -50,6 +50,45 @@ async function chamarClaude(system, mensagemUsuario, maxTokens = 400) {
   }
 }
 
+// Igual ao chamarClaude, mas em vez de engolir a falha e devolver null,
+// devolve { texto, erro } com o MOTIVO real — pra funções sob demanda
+// (ex: análise sob medida) conseguirem mostrar pra pessoa por que não
+// rodou, em vez de um "não consegui agora" genérico que não ajuda a
+// entender se foi tamanho, cota, rede, etc.
+async function chamarClaudeComMotivo(system, mensagemUsuario, maxTokens = 400) {
+  if (!configurado) return { texto: null, erro: 'IA não configurada (falta ANTHROPIC_API_KEY no servidor).' };
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: mensagemUsuario }],
+      }),
+    });
+    if (!res.ok) {
+      const cru = await res.text().catch(() => '');
+      console.error(`>> Erro na API da Anthropic (status ${res.status}): ${cru}`);
+      let detalhe = cru;
+      try { const j = JSON.parse(cru); detalhe = (j.error && j.error.message) ? j.error.message : cru; } catch {}
+      return { texto: null, erro: `A IA recusou o pedido (HTTP ${res.status}): ${String(detalhe).slice(0, 300)}` };
+    }
+    const data = await res.json();
+    const bloco = (data.content || []).find((b) => b.type === 'text');
+    if (!bloco || !bloco.text) return { texto: null, erro: 'A IA respondeu sem texto — tenta de novo em instantes.' };
+    return { texto: bloco.text, erro: null };
+  } catch (err) {
+    console.error('>> Erro de rede chamando a Anthropic:', err.message);
+    return { texto: null, erro: `Erro de rede ao falar com a IA: ${err.message}` };
+  }
+}
+
 function extrairJSON(texto) {
   if (!texto) return null;
   try {
@@ -166,8 +205,9 @@ Escreva em português, texto simples corrido (SEM markdown, SEM asteriscos, SEM 
 // Só leitura — não decide resultado, não cria tarefa, não grava nada.
 // Texto corrido, sem markdown, pra caber bem na tela e ser copiável.
 async function analisarPersonalizado(conversas, instrucao) {
-  if (!configurado || !conversas || conversas.length === 0) return null;
-  if (!instrucao || !String(instrucao).trim()) return null;
+  if (!configurado) return { erro: 'IA não configurada (falta ANTHROPIC_API_KEY no servidor).' };
+  if (!conversas || conversas.length === 0) return { erro: 'nenhuma conversa com mensagens pra analisar nesse setor.' };
+  if (!instrucao || !String(instrucao).trim()) return { erro: 'escreva o que você quer que a IA analise.' };
 
   const system = `Você é um analista de atendimento do Depósito Santo Antônio, uma loja de material de construção. Vai receber uma INSTRUÇÃO da gestão e, em seguida, TODAS as conversas de WhatsApp de um setor (ativas e encerradas), com o horário de cada mensagem entre colchetes.
 
@@ -194,7 +234,9 @@ Escreva em português, texto corrido e organizado, SEM markdown (sem #, sem aste
       })
       .join('\n\n');
 
-  return chamarClaude(system, userMsg, 1500);
+  const { texto, erro } = await chamarClaudeComMotivo(system, userMsg, 1500);
+  if (!texto) return { erro: erro || 'a IA não conseguiu gerar a análise agora — tenta de novo em instantes.' };
+  return { conteudo: texto };
 }
 
 module.exports = { processarNovaMensagem, analisarConversa, sugerirTarefa, analisarDiaria, analisarFinanceiroDiario, analisarPersonalizado, configurado };

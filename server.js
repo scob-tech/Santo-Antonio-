@@ -15,7 +15,16 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '20mb' }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  // HTML nunca é cacheado pelo navegador: assim, todo deploy novo aparece
+  // na hora (o cache antigo era o motivo de "subi o arquivo mas continua
+  // igual"). Já os assets estáticos (imagens etc) seguem o cache padrão.
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  },
+}));
 
 // ---------------------------------------------------------------
 // MIDDLEWARES DE AUTENTICAÇÃO
@@ -1628,8 +1637,10 @@ app.post('/api/analise-personalizada', requireAuth, requireAdmin, async (req, re
   if (!instrucao) return res.status(400).json({ erro: 'escreva o que você quer que a IA analise nas conversas' });
   if (instrucao.length > 500) return res.status(400).json({ erro: 'a instrução ficou longa demais (máximo 500 caracteres)' });
 
-  const LIMITE_CONVERSAS = 50; // conversas mais recentes do setor
-  const LIMITE_MENSAGENS = 40; // últimas N mensagens de cada conversa
+  const LIMITE_CONVERSAS = 40;   // no máximo N conversas mais recentes do setor
+  const LIMITE_MENSAGENS = 30;   // últimas N mensagens de cada conversa
+  const MAX_CHARS_MSG = 400;     // trunca mensagem gigante (evita 1 áudio transcrito enorme dominar)
+  const ORCAMENTO_CHARS = 45000; // teto total do material enviado pra IA (~11k tokens) — setor com meses de histórico (Vendas) não estoura mais
 
   // Conversas ativas E encerradas do setor, ordenadas pela atividade mais
   // recente (data da última mensagem), pegando as mais recentes primeiro.
@@ -1647,17 +1658,66 @@ app.post('/api/analise-personalizada', requireAuth, requireAdmin, async (req, re
     return res.status(400).json({ erro: 'ainda não há conversas com mensagens nesse setor pra analisar' });
   }
 
-  const conversas = leads.map((lead) => {
+  // Monta as conversas respeitando um orçamento de caracteres — assim um
+  // setor com muito histórico (Vendas roda há meses) manda um recorte
+  // recente e responde rápido, em vez de mandar tudo e a IA recusar/travar.
+  const conversas = [];
+  let acumulado = 0;
+  for (const lead of leads) {
+    if (acumulado >= ORCAMENTO_CHARS) break;
     const todas = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id);
-    return { lead, mensagens: todas.slice(-LIMITE_MENSAGENS) };
-  }).filter((c) => c.mensagens.length > 0);
-
-  const conteudo = await claudeIA.analisarPersonalizado(conversas, instrucao);
-  if (!conteudo) {
-    return res.status(500).json({ erro: 'a IA não conseguiu gerar a análise agora — tenta de novo em instantes' });
+    const mensagens = todas.slice(-LIMITE_MENSAGENS).map((m) => ({
+      ...m,
+      texto: m.texto ? String(m.texto).slice(0, MAX_CHARS_MSG) : m.texto,
+    }));
+    if (mensagens.length === 0) continue;
+    const tamanho = mensagens.reduce((s, m) => s + ((m.texto || '').length) + 24, 0) + 60;
+    conversas.push({ lead, mensagens });
+    acumulado += tamanho;
   }
 
-  res.json({ ok: true, conteudo, conversas_analisadas: conversas.length });
+  if (conversas.length === 0) {
+    return res.status(400).json({ erro: 'ainda não há conversas com mensagens nesse setor pra analisar' });
+  }
+
+  const resultado = await claudeIA.analisarPersonalizado(conversas, instrucao);
+  if (!resultado || resultado.erro) {
+    return res.status(502).json({ erro: (resultado && resultado.erro) || 'a IA não conseguiu gerar a análise agora — tenta de novo em instantes' });
+  }
+
+  // Guarda no histórico do setor (data + pergunta + conteúdo completo), pra
+  // o admin reabrir depois. A tela mostra só data + pergunta; o texto inteiro
+  // só quando clica.
+  const info = db.prepare(`
+    INSERT INTO analises_personalizadas (setor_id, instrucao, conteudo, criado_por, gerado_em)
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
+  `).run(setorAtivo.id, instrucao, resultado.conteudo, req.usuario.id);
+
+  res.json({ ok: true, id: info.lastInsertRowid, conteudo: resultado.conteudo, conversas_analisadas: conversas.length });
+});
+
+// Histórico das análises sob medida do setor — só data + pergunta (id pra
+// abrir o conteúdo depois). Só admin.
+app.get('/api/analises-personalizadas', requireAuth, requireAdmin, (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+  const linhas = db.prepare(`
+    SELECT id, instrucao, gerado_em FROM analises_personalizadas
+    WHERE setor_id = ? ORDER BY gerado_em DESC LIMIT 100
+  `).all(setorAtivo.id);
+  res.json(linhas);
+});
+
+// Conteúdo completo de uma análise específica — escopo por setor de
+// propósito (a análise de um setor não abre pela aba de outro). Só admin.
+app.get('/api/analises-personalizadas/:id', requireAuth, requireAdmin, (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+  const analise = db.prepare(`
+    SELECT * FROM analises_personalizadas WHERE id = ? AND setor_id = ?
+  `).get(req.params.id, setorAtivo.id);
+  if (!analise) return res.status(404).json({ erro: 'análise não encontrada nesse setor' });
+  res.json(analise);
 });
 
 // ---------------------------------------------------------------
