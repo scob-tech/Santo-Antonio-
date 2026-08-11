@@ -159,6 +159,14 @@ function foiEnviadaPorNos(messageId) {
   if (!messageId) return false;
   return mensagensEnviadasPorNos.has(messageId);
 }
+function registrarComoEnviadaPorNos(messageId) {
+  if (!messageId) return;
+  mensagensEnviadasPorNos.add(messageId);
+  if (mensagensEnviadasPorNos.size > LIMITE_MEMORIA) {
+    const primeiro = mensagensEnviadasPorNos.values().next().value;
+    mensagensEnviadasPorNos.delete(primeiro);
+  }
+}
 
 // Manda uma mensagem de texto de verdade pro WhatsApp do cliente.
 // Não lança erro pro chamador — só loga — pra nunca travar o fluxo interno
@@ -186,13 +194,7 @@ async function enviarMensagemWhatsapp(telefone, texto, setor = 'vendas') {
       return { enviado: false, motivo: 'erro_zapi', status: res.status };
     }
     const data = await res.json().catch(() => null);
-    if (data && data.messageId) {
-      mensagensEnviadasPorNos.add(data.messageId);
-      if (mensagensEnviadasPorNos.size > LIMITE_MEMORIA) {
-        const primeiro = mensagensEnviadasPorNos.values().next().value;
-        mensagensEnviadasPorNos.delete(primeiro);
-      }
-    }
+    if (data && data.messageId) registrarComoEnviadaPorNos(data.messageId);
     return { enviado: true };
   } catch (err) {
     console.error(`>> Erro de rede ao chamar a Z-API [${setor}]:`, err.message);
@@ -239,6 +241,8 @@ async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, le
       console.error(`>> Falha ao enviar mídia via Z-API [${setor}] (status ${res.status}): ${erro}`);
       return { enviado: false, motivo: 'erro_zapi', status: res.status };
     }
+    const data = await res.json().catch(() => null);
+    if (data && data.messageId) registrarComoEnviadaPorNos(data.messageId);
     return { enviado: true };
   } catch (err) {
     console.error(`>> Erro de rede ao enviar mídia pela Z-API [${setor}]:`, err.message);

@@ -319,7 +319,7 @@
   /* Esses dois abrem POR CIMA da caixa de conversa (que já é um modal) —
      sem isso, como vêm antes no HTML, a conversa desenhava por cima deles
      mesmo estando "atrás" na hierarquia de ações. */
-  #modal-transferir, #modal-encerrar, #modal-salvar-contato { z-index: 110; }
+  #modal-transferir, #modal-encerrar, #modal-salvar-contato, #modal-editar-mensagem { z-index: 110; }
   .modal-overlay.aberto { display: flex; }
   .modal-box {
     background: white; border-radius: 10px; padding: 24px; width: 100%; max-width: 380px;
@@ -362,12 +362,29 @@
   .header-actions { display: flex; gap: 8px; }
 
   .balao {
-    max-width: 78%; padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.4;
+    max-width: 82%; padding: 11px 15px; border-radius: 14px; font-size: 14.5px; line-height: 1.48; position: relative;
   }
   .balao-cliente { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
   .balao-vendedor { align-self: flex-end; background: var(--navy); color: white; border-bottom-right-radius: 3px; }
   .balao-ia { align-self: flex-end; background: var(--navy-bg); color: var(--navy); border-bottom-right-radius: 3px; }
-  .balao-hora { font-size: 10px; opacity: 0.65; margin-top: 3px; text-align: right; }
+  .balao-hora { font-size: 10.5px; opacity: 0.65; margin-top: 4px; text-align: right; }
+  .balao-citacao {
+    display: block; border-left: 3px solid rgba(0,0,0,.25); background: rgba(0,0,0,.06);
+    border-radius: 6px; padding: 5px 9px; margin-bottom: 6px; font-size: 12px; opacity: .88; cursor: pointer;
+  }
+  .balao-vendedor .balao-citacao, .balao-ia .balao-citacao { border-left-color: rgba(255,255,255,.5); background: rgba(255,255,255,.14); }
+  .balao-citacao-autor { font-weight: 700; display: block; margin-bottom: 1px; }
+  .balao-citacao-texto { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .balao-btn-responder {
+    font-size: 11px; opacity: 0; transition: opacity .12s ease;
+    background: var(--card); border: 1px solid var(--border); border-radius: 50%; width: 22px; height: 22px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--muted);
+  }
+  .balao-acoes { position: absolute; top: 2px; display: flex; gap: 3px; }
+  .balao-cliente .balao-acoes { right: -28px; flex-direction: column; }
+  .balao-vendedor .balao-acoes, .balao-ia .balao-acoes { left: -28px; flex-direction: column; }
+  .balao:hover .balao-btn-responder { opacity: 1; }
+  .balao-apagada { opacity: .6; font-style: italic; }
   .lead-clicavel { cursor: pointer; }
   .lead-clicavel:hover .texto { text-decoration: underline; }
 
@@ -829,10 +846,11 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
   flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; background: var(--bg);
 }
 .conversa-modal-footer { padding: 14px 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
-.conversa-modal-reply { display: flex; gap: 10px; align-items: center; }
+.conversa-modal-reply { display: flex; gap: 10px; align-items: flex-end; }
 .conversa-modal-input {
-  flex: 1; padding: 11px 14px; border: 1px solid var(--border); border-radius: 22px;
+  flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 18px;
   font-size: 14px; font-family: 'Inter', sans-serif; background: var(--card); color: var(--text);
+  resize: none; overflow-y: auto; max-height: 120px; min-height: 22px; line-height: 1.4;
 }
 .icon-btn {
   border: 1px solid var(--border); background: var(--card); width: 40px; height: 40px; border-radius: 50%;
@@ -1251,6 +1269,18 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
+  <div class="modal-overlay" id="modal-editar-mensagem">
+    <div class="modal-box">
+      <h3>Editar mensagem</h3>
+      <textarea id="em-texto" rows="4" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter',sans-serif; font-size:14px; resize:vertical;"></textarea>
+      <div class="modal-erro" id="em-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-editar-mensagem')" style="flex:1;">Cancelar</button>
+        <button onclick="confirmarEditarMensagem()" style="flex:1;">Salvar</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="modal-salvar-contato">
     <div class="modal-box">
       <h3>💾 Salvar contato</h3>
@@ -1340,6 +1370,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
           </div>
         </div>
         <div class="conversa-modal-header-actions" id="conversa-header-acoes" style="display:none;">
+          <button class="btn-subtle" onclick="marcarComoNaoLida()">📩 Não lida</button>
           <button class="btn-subtle" onclick="sugerirTarefaIA()">🤖 Sugerir tarefa</button>
           <button class="btn-subtle" onclick="abrirTransferir()">Transferir</button>
           <button class="btn-subtle btn-subtle--encerrar" onclick="encerrarLeadDaConversa()">Encerrar conversa</button>
@@ -1359,13 +1390,23 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
         </div>
         <div id="conversa-caixa-resposta" style="display:none; flex-direction:column; gap:8px;">
           <div id="conversa-anexo-preview" style="display:none; align-items:center; gap:8px; background:var(--bg); padding:6px 10px; border-radius:6px; font-size:12px;"></div>
+          <div id="conversa-respondendo-preview" style="display:none; align-items:center; gap:8px; background:var(--bg); border-left:3px solid var(--navy); padding:6px 10px; border-radius:6px; font-size:12px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:700; color:var(--navy);" id="conversa-respondendo-autor"></div>
+              <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted);" id="conversa-respondendo-texto"></div>
+            </div>
+            <button type="button" class="link-mini" onclick="cancelarResposta()" style="flex-shrink:0;">✕</button>
+          </div>
           <form class="conversa-modal-reply" onsubmit="event.preventDefault(); enviarMensagemConversa();">
-            <button type="button" class="icon-btn" title="Anexar arquivo" onclick="document.getElementById('conversa-arquivo').click()">📎</button>
-            <input type="file" id="conversa-arquivo" style="display:none;" onchange="selecionarAnexo(event)" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx" />
+            <button type="button" class="icon-btn" title="Anexar arquivo (pode escolher vários)" onclick="document.getElementById('conversa-arquivo').click()">📎</button>
+            <input type="file" id="conversa-arquivo" multiple style="display:none;" onchange="selecionarAnexo(event)" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx" />
             <button type="button" class="icon-btn" title="Tirar foto" onclick="document.getElementById('conversa-camera').click()">📷</button>
             <input type="file" id="conversa-camera" style="display:none;" onchange="selecionarAnexo(event)" accept="image/*" capture="environment" />
             <button type="button" class="icon-btn" id="btn-audio" title="Gravar áudio" onclick="alternarGravacaoAudio()">🎤</button>
-            <input type="text" id="conversa-texto" class="conversa-modal-input" placeholder="Digite uma mensagem..." autocomplete="off" />
+            <div style="flex:1; position:relative;">
+              <div id="conversa-mencoes-dropdown" style="display:none; position:absolute; bottom:100%; left:0; right:0; margin-bottom:6px; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.12); max-height:160px; overflow-y:auto; z-index:5;"></div>
+              <textarea id="conversa-texto" class="conversa-modal-input" rows="1" placeholder="Digite uma mensagem... (Shift+Enter pra quebrar linha)" autocomplete="off" oninput="aoDigitarMensagem(this)" onkeydown="aoTeclarMensagem(event)"></textarea>
+            </div>
             <button type="submit" class="btn-primary">Enviar</button>
           </form>
         </div>

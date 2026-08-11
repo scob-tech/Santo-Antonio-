@@ -207,6 +207,20 @@ if (!colunaExiste('mensagens', 'midia_tipo')) {
 if (!colunaExiste('mensagens', 'midia_nome')) {
   db.exec(`ALTER TABLE mensagens ADD COLUMN midia_nome TEXT`);
 }
+// Vínculo de "responder" — igual ao WhatsApp, mostra uma citação da
+// mensagem original em cima da resposta.
+if (!colunaExiste('mensagens', 'responde_a')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN responde_a INTEGER`);
+}
+// Editar/apagar mensagem depois de enviada — só se aplica a mensagens
+// nossas (remetente='vendedor'); apagar é "soft delete": o texto original
+// some, mas a linha continua existindo (histórico/citação não quebra).
+if (!colunaExiste('mensagens', 'editada')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN editada INTEGER NOT NULL DEFAULT 0`);
+}
+if (!colunaExiste('mensagens', 'apagada')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN apagada INTEGER NOT NULL DEFAULT 0`);
+}
 // marca quando o dono (ou gestor) abriu a conversa pela última vez —
 // alimenta o badge de "mensagem não lida" nas Conversas Ativas
 if (!colunaExiste('leads', 'visto_em')) {

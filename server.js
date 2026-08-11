@@ -497,6 +497,20 @@ function criarHandlerWebhookZapi(setor) {
           SELECT * FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
         `).get(telefone, setorObj.id);
         if (leadAtivo && leadAtivo.status !== 'encerrado') {
+          // Segunda camada de proteção contra duplicação: mesmo que o
+          // messageId da Z-API não tenha batido com o que registramos no
+          // envio (não é 100% garantido pela plataforma), se já existe uma
+          // mensagem NOSSA idêntica nos últimos 20 segundos nessa mesma
+          // conversa, é o eco do que a gente acabou de mandar — não uma
+          // resposta manual de verdade. Evita duplicar.
+          const ecoRecente = db.prepare(`
+            SELECT id FROM mensagens WHERE lead_id = ? AND remetente = 'vendedor' AND texto = ?
+            AND criado_em >= strftime('%Y-%m-%d %H:%M:%f','now','-20 seconds')
+            ORDER BY criado_em DESC LIMIT 1
+          `).get(leadAtivo.id, texto);
+          if (ecoRecente) {
+            return res.status(200).json({ info: 'eco recente idêntico já registrado, ignorado' });
+          }
           db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', ?, ?, ?)`)
             .run(leadAtivo.id, texto, midiaUrl || null, midiaTipo || null);
           // Responder manualmente já "puxa" a conversa pra atendimento —
@@ -674,6 +688,61 @@ app.get('/api/leads/:id', requireAuth, (req, res) => {
   res.json({ ...lead, mensagens, dono, contato_salvo: Boolean(db.getContatoPorTelefone(lead.telefone)) });
 });
 
+// Marca como não lida de propósito — útil pra "lembrar de responder depois".
+// Recua visto_em pra 1ms antes da mensagem mais recente da conversa, então
+// o badge de não lida volta a aparecer (pelo menos com a última mensagem).
+app.post('/api/leads/:id/marcar-nao-lida', requireAuth, (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) {
+    return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  }
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
+  if (!ehGestor(req.usuario) && !dono) {
+    return res.status(403).json({ erro: 'só quem está atendendo (ou o admin) pode marcar como não lida' });
+  }
+  const ultima = db.prepare('SELECT criado_em FROM mensagens WHERE lead_id = ? ORDER BY criado_em DESC LIMIT 1').get(req.params.id);
+  if (!ultima) return res.status(400).json({ erro: 'conversa sem mensagem ainda' });
+  db.prepare(`UPDATE leads SET visto_em = datetime(?, '-1 seconds') WHERE id = ?`).run(ultima.criado_em, req.params.id);
+  res.json({ ok: true });
+});
+
+app.patch('/api/leads/:id/mensagens/:msgId', requireAuth, async (req, res) => {
+  const { texto } = req.body;
+  if (!texto || !texto.trim()) return res.status(400).json({ erro: 'texto não pode ficar vazio' });
+
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
+  if (!ehGestor(req.usuario) && !dono) return res.status(403).json({ erro: 'sem permissão nessa conversa' });
+
+  const msg = db.prepare('SELECT * FROM mensagens WHERE id = ? AND lead_id = ?').get(req.params.msgId, req.params.id);
+  if (!msg) return res.status(404).json({ erro: 'mensagem não encontrada' });
+  if (msg.remetente !== 'vendedor') return res.status(400).json({ erro: 'só dá pra editar mensagem enviada pela equipe' });
+  if (msg.apagada) return res.status(400).json({ erro: 'mensagem já foi apagada' });
+
+  db.prepare(`UPDATE mensagens SET texto = ?, editada = 1 WHERE id = ?`).run(texto.trim(), msg.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/leads/:id/mensagens/:msgId', requireAuth, async (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
+  if (!ehGestor(req.usuario) && !dono) return res.status(403).json({ erro: 'sem permissão nessa conversa' });
+
+  const msg = db.prepare('SELECT * FROM mensagens WHERE id = ? AND lead_id = ?').get(req.params.msgId, req.params.id);
+  if (!msg) return res.status(404).json({ erro: 'mensagem não encontrada' });
+  if (msg.remetente !== 'vendedor') return res.status(400).json({ erro: 'só dá pra apagar mensagem enviada pela equipe' });
+
+  // Soft delete: o texto/mídia somem da tela, mas a linha continua
+  // existindo (senão uma citação apontando pra essa mensagem quebraria).
+  db.prepare(`UPDATE mensagens SET apagada = 1, texto = 'Mensagem apagada', midia_url = NULL, midia_tipo = NULL, midia_nome = NULL WHERE id = ?`).run(msg.id);
+  res.json({ ok: true });
+});
+
 // Vendedor logado "puxa" o lead pra si (não seleciona mais quem — é sempre quem está logado)
 app.post('/api/leads/:id/claim', requireAuth, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
@@ -756,8 +825,18 @@ app.post('/api/leads/manual', requireAuth, (req, res) => {
   const setorAtivo = resolverSetorAtivo(req.usuario, setor);
   if (setorAtivo.erro) return res.status(403).json(setorAtivo);
 
-  const existente = db.prepare(`SELECT id FROM leads WHERE telefone = ? AND status != 'encerrado'`).get(telefone);
-  if (existente) return res.status(409).json({ erro: 'já existe uma conversa em aberto com esse telefone' });
+  // Já existe QUALQUER conversa (aberta OU encerrada) pra esse telefone
+  // nesse setor? Então isso aqui não é um contato novo — é só salvar/
+  // atualizar o nome de alguém que já é conhecido. Nunca cria uma
+  // segunda conversa nem duplica: só atualiza o nome e devolve a
+  // conversa que já existe.
+  const existenteQualquerStatus = db.prepare(
+    `SELECT id, status FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1`
+  ).get(telefone, setorAtivo.id);
+  if (existenteQualquerStatus) {
+    if (nome_cliente) db.salvarContato(telefone, nome_cliente, req.usuario.id);
+    return res.json({ lead_id: existenteQualquerStatus.id, ja_existia: true, status: existenteQualquerStatus.status });
+  }
 
   if (setorAtivo.slug === 'vendas' && !ehGestor(req.usuario)) {
     const ativos = db.prepare(
@@ -851,7 +930,7 @@ app.post('/api/leads/:id/reabrir', requireAuth, (req, res) => {
 
 // Vendedor envia mensagem pro cliente — só o dono do lead ou o admin
 app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
-  const { texto, midia_base64, midia_tipo, midia_nome } = req.body;
+  const { texto, midia_base64, midia_tipo, midia_nome, responde_a } = req.body;
   if (!texto && !midia_base64) {
     return res.status(400).json({ erro: 'texto ou anexo é obrigatório' });
   }
@@ -892,8 +971,41 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
       .run(lead.vendedor_id || req.usuario.id, req.params.id);
   }
 
-  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, midia_nome) VALUES (?, 'vendedor', ?, ?, ?, ?)`)
-    .run(req.params.id, textoFinal, midia_base64 || null, midia_tipo || null, midia_nome || null);
+  // Só aceita responder a uma mensagem que é realmente dessa mesma
+  // conversa — evita citar mensagem de outro lead por engano/malícia.
+  let respondeAValido = null;
+  if (responde_a) {
+    const msgOriginal = db.prepare('SELECT id FROM mensagens WHERE id = ? AND lead_id = ?').get(responde_a, req.params.id);
+    if (msgOriginal) respondeAValido = msgOriginal.id;
+  }
+
+  db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, midia_nome, responde_a) VALUES (?, 'vendedor', ?, ?, ?, ?, ?)`)
+    .run(req.params.id, textoFinal, midia_base64 || null, midia_tipo || null, midia_nome || null, respondeAValido);
+
+  // @Menção — quem foi citado ganha uma notificação direcionada, pra
+  // valer a pena de verdade usar isso numa conversa de grupo com várias
+  // pessoas (senão a menção é só cosmética).
+  if (texto) {
+    const mencoes = texto.match(/@[a-zA-ZÀ-ÿ0-9_]+(?:\s[A-ZÀ-Ÿ][a-zA-ZÀ-ÿ]*)*/g) || [];
+    if (mencoes.length > 0) {
+      const vendedoresDoSetor = db.prepare(`
+        SELECT vendedores.id, vendedores.nome FROM vendedores
+        JOIN vendedor_setores ON vendedor_setores.vendedor_id = vendedores.id
+        WHERE vendedor_setores.setor_id = ?
+      `).all(lead.setor_id);
+      for (const mencaoTexto of mencoes) {
+        const nomeMencionado = mencaoTexto.slice(1).toLowerCase();
+        const encontrado = vendedoresDoSetor.find((v) => v.nome.toLowerCase() === nomeMencionado || v.nome.toLowerCase().startsWith(nomeMencionado));
+        if (encontrado && encontrado.id !== req.usuario.id) {
+          push.notificarVendedor(encontrado.id, {
+            titulo: `📣 ${req.usuario.nome} te mencionou`,
+            corpo: `${lead.nome_cliente || lead.telefone}: ${truncar(texto)}`,
+            leadId: lead.id,
+          }).catch((err) => console.error('>> Falha ao notificar menção:', err.message));
+        }
+      }
+    }
+  }
 
   const envio = midia_base64
     ? await zapi.enviarMidiaWhatsapp(lead.telefone, midia_tipo, midia_base64, midia_nome, textoParaEnviar, setorDoLead ? setorDoLead.slug : 'vendas')
@@ -1480,6 +1592,142 @@ app.post('/api/contatos', requireAuth, (req, res) => {
   }
   db.salvarContato(telefone, nome.trim(), req.usuario.id);
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------
+// RELATÓRIO DE USO — página HTML pronta, pra abrir direto no navegador
+// (inclusive do celular) sem precisar de terminal/console. Só admin.
+// ---------------------------------------------------------------
+const HORA_COMERCIAL_INICIO = 8, HORA_COMERCIAL_FIM = 18;
+function paraBrasilia(dataStr) {
+  const comZ = dataStr.includes('Z') ? dataStr : dataStr.replace(' ', 'T') + 'Z';
+  return new Date(new Date(comZ).getTime() - 3 * 60 * 60 * 1000);
+}
+function minutosComerciaisEntre(inicioStr, fimStr) {
+  let total = 0;
+  let cursor = paraBrasilia(inicioStr);
+  const alvo = paraBrasilia(fimStr);
+  while (cursor < alvo) {
+    const diaSemana = cursor.getUTCDay();
+    const ehDiaUtil = diaSemana >= 1 && diaSemana <= 5;
+    const horaAtual = cursor.getUTCHours() + cursor.getUTCMinutes() / 60;
+    if (!ehDiaUtil || horaAtual < HORA_COMERCIAL_INICIO || horaAtual >= HORA_COMERCIAL_FIM) {
+      const proximo = new Date(cursor);
+      if (!ehDiaUtil || horaAtual >= HORA_COMERCIAL_FIM) {
+        proximo.setUTCDate(proximo.getUTCDate() + 1);
+        proximo.setUTCHours(HORA_COMERCIAL_INICIO, 0, 0, 0);
+        while (proximo.getUTCDay() === 0 || proximo.getUTCDay() === 6) proximo.setUTCDate(proximo.getUTCDate() + 1);
+      } else {
+        proximo.setUTCHours(HORA_COMERCIAL_INICIO, 0, 0, 0);
+      }
+      cursor = proximo;
+      continue;
+    }
+    const fimExpediente = new Date(cursor);
+    fimExpediente.setUTCHours(HORA_COMERCIAL_FIM, 0, 0, 0);
+    const proximoPonto = alvo < fimExpediente ? alvo : fimExpediente;
+    total += (proximoPonto - cursor) / 60000;
+    cursor = proximoPonto;
+  }
+  return total;
+}
+
+app.get('/relatorio-uso', requireAuth, requireAdmin, (req, res) => {
+  const setores = db.getTodosSetores();
+  const blocos = [];
+
+  for (const setor of setores) {
+    const totalLeads = db.prepare('SELECT COUNT(*) n FROM leads WHERE setor_id = ?').get(setor.id).n;
+    if (totalLeads === 0) continue;
+    const encerrados = db.prepare(`SELECT COUNT(*) n FROM leads WHERE setor_id = ? AND status = 'encerrado'`).get(setor.id).n;
+    const convertidos = db.prepare(`SELECT COUNT(*) n FROM leads WHERE setor_id = ? AND resultado = 'convertido'`).get(setor.id).n;
+    const valorTotal = db.prepare(`SELECT COALESCE(SUM(valor_venda),0) v FROM leads WHERE setor_id = ? AND resultado = 'convertido'`).get(setor.id).v;
+    const primeiroLead = db.prepare('SELECT MIN(criado_em) d FROM leads WHERE setor_id = ?').get(setor.id).d;
+    const totalMsgs = db.prepare(`SELECT COUNT(*) n FROM mensagens WHERE lead_id IN (SELECT id FROM leads WHERE setor_id = ?)`).get(setor.id).n;
+
+    const leadsDoSetor = db.prepare(`SELECT id FROM leads WHERE setor_id = ? AND is_grupo = 0`).all(setor.id);
+    const tempos = [];
+    for (const lead of leadsDoSetor) {
+      const primeiraCliente = db.prepare(`SELECT criado_em FROM mensagens WHERE lead_id = ? AND remetente = 'cliente' ORDER BY criado_em ASC LIMIT 1`).get(lead.id);
+      if (!primeiraCliente) continue;
+      const primeiraResposta = db.prepare(`SELECT criado_em FROM mensagens WHERE lead_id = ? AND remetente IN ('vendedor','ia') AND criado_em > ? ORDER BY criado_em ASC LIMIT 1`).get(lead.id, primeiraCliente.criado_em);
+      if (!primeiraResposta) continue;
+      const minutos = minutosComerciaisEntre(primeiraCliente.criado_em, primeiraResposta.criado_em);
+      if (minutos >= 0 && minutos < 60 * 24) tempos.push(minutos);
+    }
+    const mediaResposta = tempos.length > 0 ? (tempos.reduce((a, b) => a + b, 0) / tempos.length) : null;
+
+    blocos.push({ setor, totalLeads, encerrados, convertidos, valorTotal, primeiroLead, totalMsgs, mediaResposta, medidos: tempos.length });
+  }
+
+  const porMes = db.prepare(`
+    SELECT strftime('%Y-%m', criado_em) AS mes, COUNT(*) AS n FROM leads
+    WHERE criado_em >= date('now', '-6 months') GROUP BY mes ORDER BY mes ASC
+  `).all();
+  const maxMes = Math.max(...porMes.map((m) => m.n), 1);
+
+  const fmtR$ = (n) => 'R$ ' + (n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+  const fmtMin = (min) => min == null ? '—' : (min < 60 ? `${min.toFixed(0)} min` : `${(min / 60).toFixed(1)} h`);
+
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relatório de Uso — Santo Antônio</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --navy:#2B3990; --navy-d:#202B6B; --red:#E63329; --bg:#F1F2F5; --border:#E4E6EB; --muted:#6B7280; --green:#16A34A; --green-bg:#E9F7EF; }
+  * { box-sizing:border-box; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:#1F2430; margin:0; padding:16px; }
+  h1 { font-family:'Oswald',sans-serif; font-size:19px; color:var(--navy-d); margin:4px 0 2px; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:18px; }
+  .card { background:white; border-radius:12px; padding:16px 18px; margin-bottom:14px; border-top:3px solid var(--navy); }
+  .card.destaque { border-top-color: var(--red); }
+  .card h2 { font-family:'Oswald',sans-serif; font-size:15px; color:var(--navy-d); margin:0 0 10px; text-transform:uppercase; }
+  .linha { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .linha:last-child { border-bottom:none; }
+  .linha b { color:var(--navy-d); }
+  .stat-grid { display:flex; gap:10px; margin-bottom:14px; }
+  .stat { flex:1; background:white; border-radius:10px; padding:12px; text-align:center; border-top:3px solid var(--navy); }
+  .stat .num { font-family:'Oswald',sans-serif; font-size:20px; color:var(--navy-d); }
+  .stat .lab { font-size:9.5px; color:var(--muted); text-transform:uppercase; margin-top:2px; }
+  .mes-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:12px; }
+  .mes-label { width:56px; font-weight:700; color:var(--navy-d); flex-shrink:0; }
+  .mes-barra-track { flex:1; background:var(--border); border-radius:6px; height:10px; overflow:hidden; }
+  .mes-barra-fill { background:var(--navy); height:100%; }
+  .mes-valor { width:64px; text-align:right; color:var(--muted); flex-shrink:0; }
+  .aviso { background:var(--green-bg); color:var(--green); border-radius:8px; padding:10px 12px; font-size:11.5px; margin-bottom:16px; }
+</style></head>
+<body>
+  <h1>📊 Relatório de Uso</h1>
+  <div class="sub">Depósito Santo Antônio · gerado agora, direto do banco de dados</div>
+  <div class="aviso">✅ Tempo de resposta considera só horário comercial (seg-sex, 8h-18h) — mensagem fora do expediente não conta.</div>
+
+  ${blocos.map((b) => `
+    <div class="card ${b.setor.slug === 'vendas' ? 'destaque' : ''}">
+      <h2>${b.setor.nome}</h2>
+      <div class="linha"><span>Em operação desde</span><b>${b.primeiroLead ? b.primeiroLead.split(' ')[0].split('-').reverse().join('/') : '—'}</b></div>
+      <div class="linha"><span>Conversas atendidas</span><b>${b.totalLeads}</b></div>
+      <div class="linha"><span>Conversas encerradas</span><b>${b.encerrados}</b></div>
+      ${b.setor.slug === 'vendas' ? `
+      <div class="linha"><span>Pedidos fechados</span><b>${b.convertidos} (${b.totalLeads > 0 ? Math.round(100 * b.convertidos / b.totalLeads) : 0}%)</b></div>
+      <div class="linha"><span>Valor vendido</span><b>${fmtR$(b.valorTotal)}</b></div>` : ''}
+      <div class="linha"><span>Mensagens trocadas</span><b>${b.totalMsgs}</b></div>
+      <div class="linha"><span>Tempo médio de resposta*</span><b>${fmtMin(b.mediaResposta)}</b></div>
+    </div>
+  `).join('')}
+
+  <div class="card">
+    <h2>📈 Volume por mês</h2>
+    ${porMes.map((m) => `
+      <div class="mes-row">
+        <div class="mes-label">${m.mes}</div>
+        <div class="mes-barra-track"><div class="mes-barra-fill" style="width:${100 * m.n / maxMes}%;"></div></div>
+        <div class="mes-valor">${m.n} conversas</div>
+      </div>
+    `).join('')}
+  </div>
+
+  <div class="sub" style="margin-top:10px;">*calculado só em horário comercial (seg-sex, 8h-18h, horário de Brasília)</div>
+</body></html>`);
 });
 
 // ---------------------------------------------------------------

@@ -928,6 +928,7 @@ async function abrirConversa(leadId) {
   }
   const lead = await res.json();
   leadConversaAtual = lead;
+  cancelarResposta();
   renderizarConversa(lead);
   abrirModal('modal-conversa');
 }
@@ -964,7 +965,13 @@ function renderizarMidia(m) {
 // sem os asteriscos literais — só cosmético, não muda o texto salvo.
 function formatarTextoMensagem(texto) {
   const escapado = escapeHtml(texto);
-  return escapado.replace(/^\*(.+?):\*\n/, '<strong>$1:</strong><br>');
+  const semPrefixo = escapado.replace(/^\*(.+?):\*\n/, '<strong>$1:</strong><br>');
+  // Destaca @Menção em negrito — só cosmético, não muda o texto salvo.
+  // Sem cor fixa de propósito: o balão do vendedor tem fundo navy com
+  // texto branco, uma cor fixa ficaria ilegível nesse caso.
+  return semPrefixo.replace(/(^|\s)(@[a-zA-ZÀ-ÿ0-9_]+(?:\s[A-ZÀ-Ÿ][a-zA-ZÀ-ÿ]*)*)(?=[\s,.!?]|$)/g, (m, espaco, mencao) =>
+    `${espaco}<span style="font-weight:800; text-decoration:underline;">${mencao}</span>`
+  );
 }
 
 function renderizarConversa(lead) {
@@ -975,10 +982,35 @@ function renderizarConversa(lead) {
   document.getElementById('btn-salvar-contato').style.display = lead.contato_salvo ? 'none' : 'inline-block';
 
   const msgsEl = document.getElementById('conversa-mensagens');
+  const porId = {};
+  lead.mensagens.forEach((m) => { porId[m.id] = m; });
+
   msgsEl.innerHTML = lead.mensagens.map(m => {
     const classe = m.remetente === 'cliente' ? 'balao-cliente' : m.remetente === 'ia' ? 'balao-ia' : 'balao-vendedor';
     const hora = new Date(m.criado_em + 'Z').toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    return `<div class="balao ${classe}">${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
+
+    let citacaoHtml = '';
+    const original = m.responde_a ? porId[m.responde_a] : null;
+    if (original) {
+      const autorOriginal = original.remetente === 'cliente' ? (lead.nome_cliente || lead.telefone) : original.remetente === 'ia' ? 'IA' : 'Você';
+      citacaoHtml = `<span class="balao-citacao" onclick="irParaMensagem(${original.id})">
+        <span class="balao-citacao-autor">${escapeHtml(autorOriginal)}</span>
+        <span class="balao-citacao-texto">${escapeHtml(original.texto.replace(/^\*(.+?):\*\n/, '$1: '))}</span>
+      </span>`;
+    }
+
+    const podeEditarApagar = m.remetente === 'vendedor' && !m.apagada;
+    const acoesHtml = `<span class="balao-acoes">
+        <span class="balao-btn-responder" onclick="iniciarResposta(${m.id})" title="Responder">↩</span>
+        ${podeEditarApagar ? `<span class="balao-btn-responder" onclick="abrirEditarMensagem(${m.id})" title="Editar">✏️</span>` : ''}
+        ${podeEditarApagar ? `<span class="balao-btn-responder" onclick="apagarMensagem(${m.id})" title="Apagar">🗑️</span>` : ''}
+      </span>`;
+    const marcaEditada = m.editada && !m.apagada ? '<span style="opacity:.6; font-size:10px;"> (editada)</span>' : '';
+
+    return `<div class="balao ${classe} ${m.apagada ? 'balao-apagada' : ''}" id="msg-${m.id}">
+        ${acoesHtml}
+        ${citacaoHtml}${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}${marcaEditada}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div>
+      </div>`;
   }).join('');
   msgsEl.scrollTop = msgsEl.scrollHeight;
 
@@ -1060,7 +1092,7 @@ async function alternarGravacaoAudio() {
   }
 }
 
-let anexoSelecionado = null; // { dataUri, tipo, nome }
+let anexosSelecionados = []; // [{ dataUri, tipo, nome }]
 
 function tipoDoArquivo(mime) {
   if (mime.startsWith('image/')) return 'imagem';
@@ -1094,81 +1126,229 @@ async function corrigirOrientacaoImagem(arquivo) {
   }
 }
 
-async function selecionarAnexo(event) {
-  const arquivo = event.target.files[0];
-  if (!arquivo) return;
-
-  if (arquivo.size > 15 * 1024 * 1024) {
-    alert('Arquivo muito grande (máximo 15MB).');
-    event.target.value = '';
+function renderizarPreviewAnexos() {
+  const preview = document.getElementById('conversa-anexo-preview');
+  if (anexosSelecionados.length === 0) {
+    preview.style.display = 'none';
+    preview.innerHTML = '';
     return;
   }
+  preview.style.display = 'flex';
+  preview.style.flexWrap = 'wrap';
+  preview.innerHTML = anexosSelecionados.map((a, i) => `
+    <span style="display:inline-flex; align-items:center; gap:4px; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:2px 8px;">
+      📎 ${escapeHtml(a.nome)} <button class="link-mini" onclick="removerAnexo(${i})" style="padding:0;">✕</button>
+    </span>
+  `).join('') + (anexosSelecionados.length > 1 ? `<span style="color:var(--muted); font-size:11px;">${anexosSelecionados.length} arquivos — cada um vira uma mensagem separada</span>` : '');
+}
 
-  const preview = document.getElementById('conversa-anexo-preview');
-
-  // Só JPEG tem esse problema de rotação por EXIF (é o formato que toda
-  // câmera de celular usa). PNG (prints de tela, catálogo, etc) não passa
-  // por essa correção — reencodar mudaria o formato à toa e poderia perder
-  // transparência sem necessidade nenhuma, já que PNG não sofre desse bug.
+async function processarUmArquivo(arquivo) {
+  if (arquivo.size > 15 * 1024 * 1024) {
+    alert(`"${arquivo.name}" é muito grande (máximo 15MB) — não foi anexado.`);
+    return;
+  }
+  // Só JPEG tem o problema de rotação por EXIF (é o formato que toda
+  // câmera de celular usa). PNG (prints de tela, catálogo etc) não passa
+  // por essa correção.
   const ehJpeg = arquivo.type === 'image/jpeg' || arquivo.type === 'image/jpg';
-
   if (ehJpeg) {
-    preview.style.display = 'flex';
-    preview.innerHTML = `📎 ${arquivo.name} (ajustando orientação...)`;
     const dataUriCorrigido = await corrigirOrientacaoImagem(arquivo);
     if (dataUriCorrigido) {
-      anexoSelecionado = { dataUri: dataUriCorrigido, tipo: 'imagem', nome: arquivo.name };
-      preview.innerHTML = `📎 ${arquivo.name} <button class="link-mini" onclick="removerAnexo()" style="margin-left:auto;">Remover</button>`;
+      anexosSelecionados.push({ dataUri: dataUriCorrigido, tipo: 'imagem', nome: arquivo.name });
+      renderizarPreviewAnexos();
       return;
     }
     // createImageBitmap falhou — cai pro caminho antigo abaixo
   }
-
-  const leitor = new FileReader();
-  leitor.onload = () => {
-    anexoSelecionado = { dataUri: leitor.result, tipo: tipoDoArquivo(arquivo.type), nome: arquivo.name };
-    preview.style.display = 'flex';
-    preview.innerHTML = `📎 ${arquivo.name} <button class="link-mini" onclick="removerAnexo()" style="margin-left:auto;">Remover</button>`;
-  };
-  leitor.readAsDataURL(arquivo);
+  await new Promise((resolve) => {
+    const leitor = new FileReader();
+    leitor.onload = () => {
+      anexosSelecionados.push({ dataUri: leitor.result, tipo: tipoDoArquivo(arquivo.type), nome: arquivo.name });
+      renderizarPreviewAnexos();
+      resolve();
+    };
+    leitor.readAsDataURL(arquivo);
+  });
 }
 
-function removerAnexo() {
-  anexoSelecionado = null;
-  document.getElementById('conversa-arquivo').value = '';
+async function selecionarAnexo(event) {
+  const arquivos = [...event.target.files];
+  if (arquivos.length === 0) return;
   const preview = document.getElementById('conversa-anexo-preview');
-  preview.style.display = 'none';
-  preview.innerHTML = '';
+  preview.style.display = 'flex';
+  preview.innerHTML = `📎 Processando ${arquivos.length} arquivo(s)...`;
+  for (const arquivo of arquivos) {
+    await processarUmArquivo(arquivo);
+  }
+  event.target.value = '';
+}
+
+function removerAnexo(indice) {
+  if (indice === undefined) {
+    anexosSelecionados = [];
+  } else {
+    anexosSelecionados.splice(indice, 1);
+  }
+  document.getElementById('conversa-arquivo').value = '';
+  renderizarPreviewAnexos();
 }
 
 async function enviarMensagemConversa() {
-  const texto = document.getElementById('conversa-texto').value.trim();
-  if (!texto && !anexoSelecionado) return;
+  const campoTexto = document.getElementById('conversa-texto');
+  const texto = campoTexto.value.trim();
+  if (!texto && anexosSelecionados.length === 0) return;
   if (!leadConversaAtual) return;
 
-  const corpo = { texto };
-  if (anexoSelecionado) {
-    corpo.midia_base64 = anexoSelecionado.dataUri;
-    corpo.midia_tipo = anexoSelecionado.tipo;
-    corpo.midia_nome = anexoSelecionado.nome;
+  const respondeAId = respondendoA ? respondendoA.id : null;
+  let algumEnvioFalhou = false;
+
+  // Texto (se tiver) vai como mensagem própria, carregando a citação de
+  // resposta se houver uma ativa.
+  if (texto) {
+    const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texto, ...(respondeAId ? { responde_a: respondeAId } : {}) }),
+    });
+    if (!res.ok) { const err = await res.json(); alert(err.erro || 'Erro ao enviar mensagem'); algumEnvioFalhou = true; }
   }
 
-  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(corpo),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.erro || 'Erro ao enviar mensagem');
-    return;
+  // Cada anexo vira uma mensagem própria — é assim que o WhatsApp
+  // realmente entrega quando manda vários arquivos de uma vez.
+  for (const anexo of anexosSelecionados) {
+    const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ midia_base64: anexo.dataUri, midia_tipo: anexo.tipo, midia_nome: anexo.nome }),
+    });
+    if (!res.ok) { algumEnvioFalhou = true; }
   }
+  if (algumEnvioFalhou) alert('Uma ou mais mensagens não foram enviadas — confere a conversa.');
 
+  campoTexto.value = '';
+  campoTexto.style.height = 'auto';
   removerAnexo();
+  cancelarResposta();
   const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
   leadConversaAtual = atualizado;
   renderizarConversa(atualizado);
   carregarLeads();
+}
+
+// ---------------- Textarea: Shift+Enter quebra linha, Enter envia ----------------
+function ajustarAlturaTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function aoTeclarMensagem(event) {
+  const dropdown = document.getElementById('conversa-mencoes-dropdown');
+  const dropdownAberto = dropdown.style.display === 'block';
+
+  if (dropdownAberto && (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === 'Escape')) {
+    navegarMencoes(event);
+    return;
+  }
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    enviarMensagemConversa();
+  }
+}
+
+function aoDigitarMensagem(el) {
+  ajustarAlturaTextarea(el);
+  detectarMencao(el);
+}
+
+// ---------------- Menções com @ (pra direcionar em conversa de grupo) ----------------
+let mencaoIndiceAtivo = 0;
+let mencaoOpcoesAtuais = [];
+
+function detectarMencao(el) {
+  const valor = el.value;
+  const cursor = el.selectionStart;
+  const antesCursor = valor.slice(0, cursor);
+  const match = antesCursor.match(/(?:^|\s)@([a-zA-ZÀ-ÿ0-9_]*)$/);
+  const dropdown = document.getElementById('conversa-mencoes-dropdown');
+  if (!match) {
+    dropdown.style.display = 'none';
+    return;
+  }
+  const fragmento = match[1].toLowerCase();
+  const candidatos = (vendedoresCache || []).filter((v) =>
+    (v.setores || []).includes(setorAtivo) && v.nome.toLowerCase().includes(fragmento)
+  );
+  if (candidatos.length === 0) {
+    dropdown.style.display = 'none';
+    return;
+  }
+  mencaoOpcoesAtuais = candidatos.slice(0, 6);
+  mencaoIndiceAtivo = 0;
+  renderizarDropdownMencoes();
+}
+
+function renderizarDropdownMencoes() {
+  const dropdown = document.getElementById('conversa-mencoes-dropdown');
+  dropdown.innerHTML = mencaoOpcoesAtuais.map((v, i) => `
+    <div onclick="selecionarMencao('${escapeHtml(v.nome).replace(/'/g, "\\'")}')"
+      style="padding:8px 12px; cursor:pointer; font-size:13px; ${i === mencaoIndiceAtivo ? 'background:var(--navy-bg); color:var(--navy);' : ''}">
+      @${escapeHtml(v.nome)}
+    </div>
+  `).join('');
+  dropdown.style.display = 'block';
+}
+
+function navegarMencoes(event) {
+  const dropdown = document.getElementById('conversa-mencoes-dropdown');
+  if (event.key === 'Escape') { dropdown.style.display = 'none'; event.preventDefault(); return; }
+  if (event.key === 'ArrowDown') { mencaoIndiceAtivo = Math.min(mencaoIndiceAtivo + 1, mencaoOpcoesAtuais.length - 1); renderizarDropdownMencoes(); event.preventDefault(); return; }
+  if (event.key === 'ArrowUp') { mencaoIndiceAtivo = Math.max(mencaoIndiceAtivo - 1, 0); renderizarDropdownMencoes(); event.preventDefault(); return; }
+  if (event.key === 'Enter') { event.preventDefault(); selecionarMencao(mencaoOpcoesAtuais[mencaoIndiceAtivo].nome); }
+}
+
+function selecionarMencao(nome) {
+  const el = document.getElementById('conversa-texto');
+  const valor = el.value;
+  const cursor = el.selectionStart;
+  const antesCursor = valor.slice(0, cursor);
+  const depoisCursor = valor.slice(cursor);
+  const novoAntes = antesCursor.replace(/(?:^|\s)@([a-zA-ZÀ-ÿ0-9_]*)$/, (m) => (m.startsWith(' ') ? ' ' : '') + '@' + nome + ' ');
+  el.value = novoAntes + depoisCursor;
+  const novaPosicao = novoAntes.length;
+  el.focus();
+  el.setSelectionRange(novaPosicao, novaPosicao);
+  document.getElementById('conversa-mencoes-dropdown').style.display = 'none';
+  ajustarAlturaTextarea(el);
+}
+
+// ---------------- Responder mensagem específica (estilo WhatsApp) ----------------
+let respondendoA = null; // { id, autor, texto }
+
+function iniciarResposta(msgId) {
+  if (!leadConversaAtual) return;
+  const msg = leadConversaAtual.mensagens.find((m) => m.id === msgId);
+  if (!msg) return;
+  const autor = msg.remetente === 'cliente' ? (leadConversaAtual.nome_cliente || leadConversaAtual.telefone) : msg.remetente === 'ia' ? 'IA' : 'Você';
+  respondendoA = { id: msg.id, autor, texto: msg.texto };
+  document.getElementById('conversa-respondendo-autor').textContent = autor;
+  document.getElementById('conversa-respondendo-texto').textContent = msg.texto.replace(/^\*(.+?):\*\n/, '$1: ');
+  document.getElementById('conversa-respondendo-preview').style.display = 'flex';
+  document.getElementById('conversa-texto').focus();
+}
+
+function cancelarResposta() {
+  respondendoA = null;
+  document.getElementById('conversa-respondendo-preview').style.display = 'none';
+}
+
+// Clicar numa citação (dentro de um balão) pula pra mensagem original —
+// mesmo comportamento do WhatsApp.
+function irParaMensagem(msgId) {
+  const el = document.getElementById(`msg-${msgId}`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.style.outline = '2px solid var(--navy)';
+  setTimeout(() => { el.style.outline = 'none'; }, 900);
 }
 
 async function puxarLeadDaConversa() {
@@ -1243,6 +1423,66 @@ function encerrarLeadDaConversa() {
 
   document.getElementById('enc-erro').textContent = '';
   abrirModal('modal-encerrar');
+}
+
+let msgEmEdicao = null;
+
+function abrirEditarMensagem(msgId) {
+  if (!leadConversaAtual) return;
+  const msg = leadConversaAtual.mensagens.find((m) => m.id === msgId);
+  if (!msg) return;
+  msgEmEdicao = msgId;
+  document.getElementById('em-texto').value = msg.texto.replace(/^\*(.+?):\*\n/, '');
+  document.getElementById('em-erro').textContent = '';
+  abrirModal('modal-editar-mensagem');
+}
+
+async function confirmarEditarMensagem() {
+  if (!leadConversaAtual || !msgEmEdicao) return;
+  const texto = document.getElementById('em-texto').value.trim();
+  const erroEl = document.getElementById('em-erro');
+  if (!texto) { erroEl.textContent = 'Não pode ficar em branco.'; return; }
+
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens/${msgEmEdicao}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ texto }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    erroEl.textContent = err.erro || 'Erro ao editar';
+    return;
+  }
+  fecharModal('modal-editar-mensagem');
+  const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
+  leadConversaAtual = atualizado;
+  renderizarConversa(atualizado);
+}
+
+async function apagarMensagem(msgId) {
+  if (!leadConversaAtual) return;
+  if (!confirm('Apagar essa mensagem? Isso só apaga aqui no sistema — se já foi entregue no WhatsApp do cliente, continua lá.')) return;
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens/${msgId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao apagar');
+    return;
+  }
+  const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
+  leadConversaAtual = atualizado;
+  renderizarConversa(atualizado);
+}
+
+async function marcarComoNaoLida() {
+  if (!leadConversaAtual) return;
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/marcar-nao-lida`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.erro || 'Erro ao marcar como não lida');
+    return;
+  }
+  fecharModal('modal-conversa');
+  atualizarTudo();
 }
 
 function abrirSalvarContato() {
@@ -1338,6 +1578,7 @@ async function confirmarNovoLeadManual() {
     erroEl.style.display = 'block';
     return;
   }
+  const resultado = await res.json();
 
   // Já salva como contato de verdade também, se um nome foi informado —
   // é exatamente o que esse botão promete fazer.
@@ -1351,6 +1592,13 @@ async function confirmarNovoLeadManual() {
 
   fecharModal('modal-novo-lead');
   atualizarTudo();
+
+  // Esse telefone já tinha conversa (aberta ou encerrada) — não criou
+  // nada novo, só atualizou o nome. Avisa isso claramente, senão parece
+  // que não aconteceu nada.
+  if (resultado.ja_existia) {
+    alert(`Esse número já tinha conversa registrada — só atualizei o nome pra "${nome_cliente}". Nenhuma conversa nova foi criada.`);
+  }
 }
 
 // ---------------- Transferir atendimento ----------------
