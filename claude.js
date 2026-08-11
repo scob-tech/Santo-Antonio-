@@ -80,9 +80,18 @@ async function chamarClaudeComMotivo(system, mensagemUsuario, maxTokens = 400) {
       return { texto: null, erro: `A IA recusou o pedido (HTTP ${res.status}): ${String(detalhe).slice(0, 300)}` };
     }
     const data = await res.json();
-    const bloco = (data.content || []).find((b) => b.type === 'text');
-    if (!bloco || !bloco.text) return { texto: null, erro: 'A IA respondeu sem texto — tenta de novo em instantes.' };
-    return { texto: bloco.text, erro: null };
+    const blocos = Array.isArray(data.content) ? data.content : [];
+    // Junta TODOS os blocos de texto (não só o primeiro) — mais robusto caso
+    // a resposta venha em partes ou com um bloco de "raciocínio" antes.
+    const texto = blocos.filter((b) => b.type === 'text' && b.text).map((b) => b.text).join('').trim();
+    if (texto) return { texto, erro: null };
+    // Veio 200 mas sem texto: registra o motivo real (geralmente o modelo
+    // gastou o orçamento raciocinando e parou por 'max_tokens' antes de
+    // escrever). Devolve a flag semTexto pra quem chamou poder tentar de novo.
+    const tipos = blocos.map((b) => b.type).join(', ') || 'nenhum';
+    const motivo = data.stop_reason || 'desconhecido';
+    console.error(`>> IA 200 sem texto. stop_reason=${motivo} blocos=[${tipos}] usage=${JSON.stringify(data.usage || {})}`);
+    return { texto: null, erro: `A IA parou antes de escrever o relatório (motivo: ${motivo}). Tenta de novo, ou deixa a pergunta um pouco mais objetiva.`, semTexto: true };
   } catch (err) {
     console.error('>> Erro de rede chamando a Anthropic:', err.message);
     return { texto: null, erro: `Erro de rede ao falar com a IA: ${err.message}` };
@@ -236,9 +245,21 @@ Priorize os casos MAIS relevantes e agrupe por tema, em vez de listar exaustivam
       })
       .join('\n\n');
 
-  const { texto, erro } = await chamarClaudeComMotivo(system, userMsg, 4000);
-  if (!texto) return { erro: erro || 'a IA não conseguiu gerar a análise agora — tenta de novo em instantes.' };
-  return { conteudo: texto };
+  // 8000 tokens de folga: espaço pro modelo "pensar" no pedido pesado E
+  // ainda escrever o relatório completo (o "sem texto" acontecia quando os
+  // 4000 acabavam antes de sair o texto). Duas redes de segurança:
+  //  - se vier VAZIO (gastou o orçamento pensando), tenta de novo — cobre a
+  //    variação de um pedido pro outro (às vezes passa, às vezes não).
+  //  - se o modelo RECUSAR 8000 (cap de saída menor), cai pro 4000 que já
+  //    sabemos que passa, em vez de falhar.
+  let r = await chamarClaudeComMotivo(system, userMsg, 8000);
+  if (r.semTexto) {
+    r = await chamarClaudeComMotivo(system, userMsg, 8000);
+  } else if (!r.texto && /max_tokens/i.test(r.erro || '')) {
+    r = await chamarClaudeComMotivo(system, userMsg, 4000);
+  }
+  if (!r.texto) return { erro: r.erro || 'a IA não conseguiu gerar a análise agora — tenta de novo em instantes.' };
+  return { conteudo: r.texto };
 }
 
 module.exports = { processarNovaMensagem, analisarConversa, sugerirTarefa, analisarDiaria, analisarFinanceiroDiario, analisarPersonalizado, configurado };
