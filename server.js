@@ -16,12 +16,13 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '20mb' }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public'), {
-  // HTML nunca é cacheado pelo navegador: assim, todo deploy novo aparece
-  // na hora (o cache antigo era o motivo de "subi o arquivo mas continua
-  // igual"). Já os assets estáticos (imagens etc) seguem o cache padrão.
+  // HTML, JS e CSS sempre revalidam com o servidor antes de usar o cache —
+  // assim todo deploy novo aparece na hora (o cache antigo do app.js era o
+  // motivo de "subi o arquivo mas continua igual"). Imagens e demais assets
+  // seguem o cache padrão do navegador.
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    if (/\.(html|js|css)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     }
   },
 }));

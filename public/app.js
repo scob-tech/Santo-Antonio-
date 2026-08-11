@@ -1096,24 +1096,14 @@ function renderizarConversa(lead) {
     const original = m.responde_a ? porId[m.responde_a] : null;
     if (original) {
       const autorOriginal = original.remetente === 'cliente' ? (lead.nome_cliente || lead.telefone) : original.remetente === 'ia' ? 'IA' : 'Você';
-      citacaoHtml = `<span class="balao-citacao" onclick="irParaMensagem(${original.id})">
-        <span class="balao-citacao-autor">${escapeHtml(autorOriginal)}</span>
-        <span class="balao-citacao-texto">${escapeHtml(original.texto.replace(/^\*(.+?):\*\n/, '$1: '))}</span>
-      </span>`;
+      citacaoHtml = `<span class="balao-citacao" onclick="irParaMensagem(${original.id})"><span class="balao-citacao-autor">${escapeHtml(autorOriginal)}</span><span class="balao-citacao-texto">${escapeHtml(original.texto.replace(/^\*(.+?):\*\n/, '$1: '))}</span></span>`;
     }
 
     const podeEditarApagar = m.remetente === 'vendedor' && !m.apagada;
-    const acoesHtml = `<span class="balao-acoes">
-        <span class="balao-btn-responder" onclick="iniciarResposta(${m.id})" title="Responder">↩</span>
-        ${podeEditarApagar ? `<span class="balao-btn-responder" onclick="abrirEditarMensagem(${m.id})" title="Editar">✏️</span>` : ''}
-        ${podeEditarApagar ? `<span class="balao-btn-responder" onclick="apagarMensagem(${m.id})" title="Apagar">🗑️</span>` : ''}
-      </span>`;
+    const acoesHtml = `<span class="balao-acoes"><span class="balao-btn-responder" onclick="iniciarResposta(${m.id})" title="Responder">↩</span>${podeEditarApagar ? `<span class="balao-btn-responder" onclick="abrirEditarMensagem(${m.id})" title="Editar">✏️</span>` : ''}${podeEditarApagar ? `<span class="balao-btn-responder" onclick="apagarMensagem(${m.id})" title="Apagar">🗑️</span>` : ''}</span>`;
     const marcaEditada = m.editada && !m.apagada ? '<span style="opacity:.6; font-size:10px;"> (editada)</span>' : '';
 
-    return `<div class="balao ${classe} ${m.apagada ? 'balao-apagada' : ''}" id="msg-${m.id}">
-        ${acoesHtml}
-        ${citacaoHtml}${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}${marcaEditada}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div>
-      </div>`;
+    return `<div class="balao ${classe} ${m.apagada ? 'balao-apagada' : ''}" id="msg-${m.id}">${acoesHtml}${citacaoHtml}${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}${marcaEditada}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
   }).join('');
   msgsEl.scrollTop = msgsEl.scrollHeight;
 
