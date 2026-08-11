@@ -351,8 +351,24 @@ module.exports.getSetorPorSlug = function (slug) {
   return db.prepare(`SELECT id, slug, nome FROM setores WHERE slug = ?`).get(slug);
 };
 
+// Só dígitos — sem isso, "(11) 98765-4321" e "5511987654321" seriam
+// tratados como telefones diferentes e criariam contato/conversa
+// duplicados só por causa da formatação de como foi digitado.
+module.exports.normalizarTelefone = function (telefone) {
+  let limpo = String(telefone || '').replace(/\D/g, '');
+  // Número digitado no formato nacional (DDD + número, 10 ou 11 dígitos,
+  // sem o código do país) recebe o 55 na frente — sem isso,
+  // "(11) 98765-4321" e "5511987654321" seriam tratados como números
+  // diferentes e duplicariam a conversa.
+  if (limpo.length === 10 || limpo.length === 11) {
+    limpo = '55' + limpo;
+  }
+  return limpo;
+};
+
 module.exports.getContatoPorTelefone = function (telefone) {
-  return db.prepare(`SELECT * FROM contatos WHERE telefone = ?`).get(telefone);
+  const limpo = module.exports.normalizarTelefone(telefone);
+  return db.prepare(`SELECT * FROM contatos WHERE telefone = ?`).get(limpo);
 };
 
 // Salva (ou atualiza) o nome de um contato, e já atualiza o nome exibido
@@ -360,10 +376,11 @@ module.exports.getContatoPorTelefone = function (telefone) {
 // continuaria mostrando o nome antigo (do WhatsApp) ao lado do nome novo
 // salvo, dando a impressão de "duplicado".
 module.exports.salvarContato = function (telefone, nome, criadoPor) {
+  const limpo = module.exports.normalizarTelefone(telefone);
   db.prepare(`
     INSERT INTO contatos (telefone, nome, criado_por, criado_em)
     VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))
     ON CONFLICT(telefone) DO UPDATE SET nome = excluded.nome
-  `).run(telefone, nome, criadoPor || null);
-  db.prepare(`UPDATE leads SET nome_cliente = ? WHERE telefone = ?`).run(nome, telefone);
+  `).run(limpo, nome, criadoPor || null);
+  db.prepare(`UPDATE leads SET nome_cliente = ? WHERE telefone = ?`).run(nome, limpo);
 };

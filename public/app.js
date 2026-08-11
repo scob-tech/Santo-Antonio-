@@ -1238,7 +1238,7 @@ async function enviarMensagemConversa() {
 // ---------------- Textarea: Shift+Enter quebra linha, Enter envia ----------------
 function ajustarAlturaTextarea(el) {
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  el.style.height = Math.min(el.scrollHeight, 220) + 'px';
 }
 
 function aoTeclarMensagem(event) {

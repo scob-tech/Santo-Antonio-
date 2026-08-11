@@ -345,10 +345,15 @@ function truncar(texto, tamanho = 100) {
 async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem, midia_url, midia_tipo, setor = 'vendas', isGrupo = false }) {
   const setorObj = db.getSetorPorSlug(setor) || db.getSetorPorSlug('vendas');
 
+  // Normaliza só telefone de conversa individual — o "telefone" de um
+  // grupo é na verdade o ID do grupo (tem letras/traço), não um número
+  // de verdade, então não pode passar pela limpeza de dígitos.
+  if (!isGrupo) telefone = db.normalizarTelefone(telefone);
+
   // Contato já salvo pela equipe tem prioridade sobre o nome que vem do
   // WhatsApp (push name) — sem isso, toda mensagem nova ia sobrescrever o
   // nome que a equipe escolheu com o nome "de fábrica" do WhatsApp.
-  const contatoSalvo = db.getContatoPorTelefone(telefone);
+  const contatoSalvo = !isGrupo ? db.getContatoPorTelefone(telefone) : null;
   if (contatoSalvo) nome_cliente = contatoSalvo.nome;
 
   const leadExistente = db.prepare(`
@@ -589,7 +594,7 @@ app.get('/api/leads/buscar', requireAuth, (req, res) => {
       const naoLidas = lead.visto_em
         ? db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente' AND criado_em > ?`).get(lead.id, lead.visto_em).n
         : db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente'`).get(lead.id).n;
-      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas, contato_salvo: Boolean(db.getContatoPorTelefone(lead.telefone)) };
+      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas, contato_salvo: lead.is_grupo ? true : Boolean(db.getContatoPorTelefone(lead.telefone)) };
     });
 
   res.json(resultado);
@@ -646,7 +651,7 @@ app.get('/api/leads', requireAuth, (req, res) => {
       const naoLidas = lead.visto_em
         ? db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente' AND criado_em > ?`).get(lead.id, lead.visto_em).n
         : db.prepare(`SELECT COUNT(*) AS n FROM mensagens WHERE lead_id = ? AND remetente = 'cliente'`).get(lead.id).n;
-      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas, contato_salvo: Boolean(db.getContatoPorTelefone(lead.telefone)) };
+      return { ...lead, ultima_mensagem: ultima || null, restrito: false, dono, vendedor_nome: vendedor ? vendedor.nome : null, nao_lidas: naoLidas, contato_salvo: lead.is_grupo ? true : Boolean(db.getContatoPorTelefone(lead.telefone)) };
     }
 
     // Versão restrita: só dados mínimos
@@ -685,7 +690,7 @@ app.get('/api/leads/:id', requireAuth, (req, res) => {
     db.prepare(`UPDATE leads SET visto_em = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?`).run(req.params.id);
   }
 
-  res.json({ ...lead, mensagens, dono, contato_salvo: Boolean(db.getContatoPorTelefone(lead.telefone)) });
+  res.json({ ...lead, mensagens, dono, contato_salvo: lead.is_grupo ? true : Boolean(db.getContatoPorTelefone(lead.telefone)) });
 });
 
 // Marca como não lida de propósito — útil pra "lembrar de responder depois".
@@ -819,8 +824,10 @@ app.post('/api/leads/:id/transferir', requireAuth, (req, res) => {
 // verdade depois, faz isso normalmente pela conversa (decisão dele, com
 // o mesmo cuidado de sempre sobre iniciar conversa com número novo).
 app.post('/api/leads/manual', requireAuth, (req, res) => {
-  const { telefone, nome_cliente, observacao, setor } = req.body;
-  if (!telefone) return res.status(400).json({ erro: 'telefone é obrigatório' });
+  const { nome_cliente, observacao, setor } = req.body;
+  if (!req.body.telefone) return res.status(400).json({ erro: 'telefone é obrigatório' });
+  const telefone = db.normalizarTelefone(req.body.telefone);
+  if (telefone.length < 10) return res.status(400).json({ erro: 'telefone parece incompleto — confere o número' });
 
   const setorAtivo = resolverSetorAtivo(req.usuario, setor);
   if (setorAtivo.erro) return res.status(403).json(setorAtivo);
