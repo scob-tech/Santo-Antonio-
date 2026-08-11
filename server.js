@@ -1609,6 +1609,58 @@ app.post('/api/relatorios-financeiro/gerar-agora', requireAuth, requireAdmin, as
 });
 
 // ---------------------------------------------------------------
+// ANÁLISE SOB MEDIDA (pedido da gestão) — o admin escreve uma instrução
+// livre (ex: "por que os clientes não estão fechando essa semana", "quanto
+// de desconto os vendedores estão dando") e a IA lê TODAS as conversas
+// ativas e encerradas do setor ativo, respondendo especificamente àquilo.
+// Não grava nada — é leitura sob demanda. Tem cap de conversas e de
+// mensagens por conversa pra não estourar custo/tempo/token num setor com
+// histórico grande (o total lido volta na resposta, pra ficar transparente).
+// ---------------------------------------------------------------
+app.post('/api/analise-personalizada', requireAuth, requireAdmin, async (req, res) => {
+  const setorAtivo = resolverSetorAtivo(req.usuario, req.query.setor);
+  if (setorAtivo.erro) return res.status(403).json(setorAtivo);
+  if (!claudeIA.configurado) {
+    return res.status(400).json({ erro: 'IA não configurada nesse servidor (falta ANTHROPIC_API_KEY)' });
+  }
+
+  const instrucao = (req.body && req.body.instrucao != null ? String(req.body.instrucao) : '').trim();
+  if (!instrucao) return res.status(400).json({ erro: 'escreva o que você quer que a IA analise nas conversas' });
+  if (instrucao.length > 500) return res.status(400).json({ erro: 'a instrução ficou longa demais (máximo 500 caracteres)' });
+
+  const LIMITE_CONVERSAS = 50; // conversas mais recentes do setor
+  const LIMITE_MENSAGENS = 40; // últimas N mensagens de cada conversa
+
+  // Conversas ativas E encerradas do setor, ordenadas pela atividade mais
+  // recente (data da última mensagem), pegando as mais recentes primeiro.
+  const leads = db.prepare(`
+    SELECT leads.*, MAX(mensagens.criado_em) AS ultima_msg
+    FROM leads
+    JOIN mensagens ON mensagens.lead_id = leads.id
+    WHERE leads.setor_id = ?
+    GROUP BY leads.id
+    ORDER BY ultima_msg DESC
+    LIMIT ?
+  `).all(setorAtivo.id, LIMITE_CONVERSAS);
+
+  if (leads.length === 0) {
+    return res.status(400).json({ erro: 'ainda não há conversas com mensagens nesse setor pra analisar' });
+  }
+
+  const conversas = leads.map((lead) => {
+    const todas = db.prepare('SELECT * FROM mensagens WHERE lead_id = ? ORDER BY criado_em ASC').all(lead.id);
+    return { lead, mensagens: todas.slice(-LIMITE_MENSAGENS) };
+  }).filter((c) => c.mensagens.length > 0);
+
+  const conteudo = await claudeIA.analisarPersonalizado(conversas, instrucao);
+  if (!conteudo) {
+    return res.status(500).json({ erro: 'a IA não conseguiu gerar a análise agora — tenta de novo em instantes' });
+  }
+
+  res.json({ ok: true, conteudo, conversas_analisadas: conversas.length });
+});
+
+// ---------------------------------------------------------------
 // CONTATOS — nome de verdade por telefone, salvo pela equipe. Compartilhado
 // entre os 3 setores (é a mesma pessoa/número, independente de quem fala
 // com ela). Qualquer vendedor logado pode ver e salvar.

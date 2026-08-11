@@ -158,4 +158,43 @@ Escreva em português, texto simples corrido (SEM markdown, SEM asteriscos, SEM 
   return chamarClaude(system, userMsg, 1200);
 }
 
-module.exports = { processarNovaMensagem, analisarConversa, sugerirTarefa, analisarDiaria, analisarFinanceiroDiario, configurado };
+// Análise SOB MEDIDA (sob demanda) — pedido da gestão. Em vez de rodar a
+// análise fixa, a gestora escreve uma instrução livre (ex: "por que os
+// clientes não estão fechando essa semana", "quanto de desconto os
+// vendedores estão dando nos pedidos") e a IA lê TODAS as conversas
+// fornecidas (ativas e encerradas) respondendo especificamente àquilo.
+// Só leitura — não decide resultado, não cria tarefa, não grava nada.
+// Texto corrido, sem markdown, pra caber bem na tela e ser copiável.
+async function analisarPersonalizado(conversas, instrucao) {
+  if (!configurado || !conversas || conversas.length === 0) return null;
+  if (!instrucao || !String(instrucao).trim()) return null;
+
+  const system = `Você é um analista de atendimento do Depósito Santo Antônio, uma loja de material de construção. Vai receber uma INSTRUÇÃO da gestão e, em seguida, TODAS as conversas de WhatsApp de um setor (ativas e encerradas), com o horário de cada mensagem entre colchetes.
+
+Sua tarefa é responder EXATAMENTE à instrução da gestão, baseando-se SOMENTE no que está escrito nas conversas. Seja específico e concreto: cite nomes de clientes, valores, descontos, tempos de resposta e trechos reais sempre que ajudarem a sustentar o que você afirma. Nunca invente conversa, número ou fato que não esteja no material. Se a instrução pedir algo que as conversas não permitem responder, diga isso com honestidade em vez de inventar.
+
+Escreva em português, texto corrido e organizado, SEM markdown (sem #, sem asteriscos de negrito, sem tabela). Pode usar títulos curtos em MAIÚSCULO seguidos de dois-pontos, e listar casos começando a linha com "- ". Comece com um resumo direto de 1 a 2 frases respondendo à pergunta e, depois, detalhe com os casos e evidências que você encontrou.`;
+
+  const transcricao = (mensagens) => mensagens
+    .map((m) => {
+      const bruto = m.criado_em || '';
+      const hora = new Date(bruto + (bruto.includes('Z') ? '' : 'Z'))
+        .toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const quem = m.remetente === 'cliente' ? 'Cliente' : m.remetente === 'ia' ? 'IA' : 'Equipe';
+      const texto = m.apagada ? '[mensagem apagada]' : m.texto;
+      return `[${hora}] ${quem}: ${texto}`;
+    })
+    .join('\n');
+
+  const userMsg = `INSTRUÇÃO DA GESTÃO:\n${String(instrucao).trim()}\n\n===== CONVERSAS DO SETOR (${conversas.length}) =====\n\n` +
+    conversas
+      .map(({ lead, mensagens }) => {
+        const situacao = lead.status === 'encerrado' ? 'encerrada' : 'ativa';
+        return `=== Conversa com ${lead.nome_cliente || lead.telefone} (${situacao}) ===\n${transcricao(mensagens)}`;
+      })
+      .join('\n\n');
+
+  return chamarClaude(system, userMsg, 1500);
+}
+
+module.exports = { processarNovaMensagem, analisarConversa, sugerirTarefa, analisarDiaria, analisarFinanceiroDiario, analisarPersonalizado, configurado };

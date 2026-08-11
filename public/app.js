@@ -372,6 +372,8 @@ function renderizarUserBox() {
   }
   if (usuarioAtual.role === 'admin') {
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
+    const painelCustom = document.getElementById('painel-analise-custom');
+    if (painelCustom) painelCustom.style.display = 'block';
   }
   if (usuarioAtual.role !== 'supervisor') {
     document.getElementById('btn-relatorio').style.display = 'inline-block';
@@ -741,6 +743,55 @@ async function rodarAnaliseDiariaAgora() {
   }
   alert(`Análise concluída: ${resultado.conversas_revisadas} conversa(s) revisada(s), ${resultado.tarefas_criadas} tarefa(s) criada(s).`);
   carregarLembretes();
+}
+
+// Análise sob medida (pedido da gestão): a IA lê todas as conversas ativas
+// e encerradas do setor ativo e responde à instrução livre que o admin
+// escreveu (ex: "por que os clientes não estão fechando"). Só admin vê o
+// campo. O resultado abre num modal, com botão de copiar.
+async function rodarAnalisePersonalizada() {
+  const inp = document.getElementById('analise-custom-prompt');
+  const instrucao = inp.value.trim();
+  if (!instrucao) {
+    alert('Escreva o que você quer que a IA analise nas conversas.');
+    inp.focus();
+    return;
+  }
+  const btn = document.getElementById('btn-analise-custom');
+  btn.disabled = true;
+  btn.textContent = '🔎 Analisando...';
+  try {
+    const res = await fetch(`${API}/api/analise-personalizada?setor=${setorAtivo}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instrucao }),
+    });
+    const resultado = await res.json();
+    if (!res.ok) {
+      alert(resultado.erro || 'Não consegui gerar a análise agora, tenta de novo em instantes.');
+      return;
+    }
+    const nomeSetor = NOMES_SETOR[setorAtivo] || setorAtivo;
+    document.getElementById('analise-custom-pergunta').textContent =
+      `"${instrucao}" — ${resultado.conversas_analisadas} conversa(s) lida(s) no setor ${nomeSetor}.`;
+    document.getElementById('analise-custom-conteudo').textContent = resultado.conteudo;
+    abrirModal('modal-analise-custom');
+  } catch (e) {
+    alert('Erro de rede ao gerar a análise. Confere a conexão e tenta de novo.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔎 Analisar';
+  }
+}
+
+function copiarAnaliseCustom() {
+  const txt = document.getElementById('analise-custom-conteudo').textContent || '';
+  const btn = document.getElementById('btn-copiar-analise-custom');
+  if (!txt) return;
+  const feedback = () => { if (btn) { btn.textContent = '✅ Copiado'; setTimeout(() => { btn.textContent = '📋 Copiar'; }, 1500); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(feedback, () => {});
+  }
 }
 
 async function abrirHistoricoRelatorios(dataParaAbrir) {
