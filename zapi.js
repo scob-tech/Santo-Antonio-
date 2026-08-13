@@ -254,4 +254,29 @@ async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, le
   }
 }
 
-module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado, configuradoPara };
+// Interpreta o webhook de STATUS da mensagem (confirmação de entrega/leitura).
+// A Z-API manda, quando o status de uma mensagem NOSSA muda, um payload de
+// "MessageStatusCallback" com o novo status e o(s) id(s) afetado(s). O nome
+// exato do campo varia um pouco entre versões, então tentamos os mais comuns.
+function interpretarStatus(body) {
+  if (!body) return { status: null, ids: [] };
+  const status = body.status || body.ack || body.messageStatus || null;
+  let ids = [];
+  if (Array.isArray(body.ids)) ids = body.ids;
+  else if (body.messageId) ids = [body.messageId];
+  else if (body.id) ids = [body.id];
+  else if (body.referenceMessageId) ids = [body.referenceMessageId];
+  return { status: status ? String(status).toUpperCase() : null, ids: ids.filter(Boolean) };
+}
+
+// Traduz o status cru da Z-API pro nosso vocabulário interno.
+// (a Z-API usa SENT/RECEIVED/READ/PLAYED; algumas versões DELIVERY/DELIVERED)
+function mapearStatusEntrega(statusCru) {
+  const s = String(statusCru || '').toUpperCase();
+  if (s === 'SENT') return 'enviado';
+  if (s === 'RECEIVED' || s === 'DELIVERY' || s === 'DELIVERED' || s === 'DELIVERY_ACK') return 'entregue';
+  if (s === 'READ' || s === 'PLAYED' || s === 'READ_SELF' || s === 'READ-SELF') return 'lido';
+  return null;
+}
+
+module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado, configuradoPara, interpretarStatus, mapearStatusEntrega };

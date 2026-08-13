@@ -319,7 +319,7 @@
   /* Esses dois abrem POR CIMA da caixa de conversa (que já é um modal) —
      sem isso, como vêm antes no HTML, a conversa desenhava por cima deles
      mesmo estando "atrás" na hierarquia de ações. */
-  #modal-transferir, #modal-encerrar, #modal-salvar-contato, #modal-editar-mensagem { z-index: 110; }
+  #modal-transferir, #modal-encerrar, #modal-salvar-contato, #modal-editar-mensagem, #modal-encaminhar { z-index: 110; }
   .modal-overlay.aberto { display: flex; }
   .modal-box {
     background: white; border-radius: 10px; padding: 24px; width: 100%; max-width: 380px;
@@ -368,7 +368,10 @@
   .balao-cliente { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
   .balao-vendedor { align-self: flex-end; background: var(--navy); color: white; border-bottom-right-radius: 3px; }
   .balao-ia { align-self: flex-end; background: var(--navy-bg); color: var(--navy); border-bottom-right-radius: 3px; }
-  .balao-hora { font-size: 10px; opacity: 0.6; margin-top: 2px; text-align: right; }
+  .balao-hora { font-size: 10px; margin-top: 2px; display: flex; justify-content: flex-end; align-items: center; gap: 3px; }
+  .balao-hora .hora-txt { opacity: 0.6; }
+  .balao-check { font-size: 11px; letter-spacing: -3px; opacity: 0.6; }
+  .balao-check.lido { opacity: 1; color: #6EC1F0; }
   .balao-citacao {
     display: block; border-left: 3px solid rgba(0,0,0,.25); background: rgba(0,0,0,.06);
     border-radius: 6px; padding: 5px 9px; margin-bottom: 6px; font-size: 12px; opacity: .88; cursor: pointer;
@@ -1403,6 +1406,20 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
+  <!-- Modal: encaminhar mensagem (busca conversa de destino em qualquer setor) -->
+  <div class="modal-overlay" id="modal-encaminhar">
+    <div class="modal-box" style="max-width:460px; width:92vw; display:flex; flex-direction:column; max-height:80vh;">
+      <h3>↪️ Encaminhar mensagem</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:-8px; margin-bottom:12px;">Escolha a conversa de destino — pode ser de qualquer setor.</p>
+      <input id="encaminhar-busca" type="text" placeholder="Buscar por nome ou telefone..." autocomplete="off" oninput="aoBuscarDestino(this.value)"
+        style="width:100%; box-sizing:border-box; padding:9px 10px; border:1px solid var(--border); border-radius:8px; font-family:'Inter',sans-serif; font-size:13px; margin-bottom:10px; background:var(--card); color:var(--text);" />
+      <div id="encaminhar-resultados" style="flex:1; min-height:120px; overflow-y:auto;"></div>
+      <div class="modal-actions" style="margin-top:12px;">
+        <button class="cancelar" onclick="fecharModal('modal-encaminhar')" style="flex:1;">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: conversa completa -->
   <div class="modal-overlay" id="modal-conversa">
     <div class="conversa-modal-box">
@@ -1461,6 +1478,6 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
-<script src="app.js?v=20260811b"></script>
+<script src="app.js?v=20260811c"></script>
 </body>
 </html>

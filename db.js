@@ -241,6 +241,13 @@ if (!colunaExiste('mensagens', 'apagada')) {
 if (!colunaExiste('mensagens', 'zapi_message_id')) {
   db.exec(`ALTER TABLE mensagens ADD COLUMN zapi_message_id TEXT`);
 }
+// Confirmação de leitura das mensagens QUE A EQUIPE ENVIA: 'enviado' (saiu),
+// 'entregue' (chegou no cliente), 'lido' (cliente abriu — ✓✓ azul). Atualizado
+// pelo webhook de status da Z-API, casando pelo zapi_message_id. Fica null nas
+// mensagens do cliente e enquanto o webhook de status não estiver configurado.
+if (!colunaExiste('mensagens', 'status_entrega')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN status_entrega TEXT`);
+}
 // marca quando o dono (ou gestor) abriu a conversa pela última vez —
 // alimenta o badge de "mensagem não lida" nas Conversas Ativas
 if (!colunaExiste('leads', 'visto_em')) {
@@ -384,6 +391,29 @@ module.exports.normalizarTelefone = function (telefone) {
     limpo = '55' + limpo;
   }
   return limpo;
+};
+
+// Variantes equivalentes de um telefone brasileiro por causa do "nono
+// dígito": o mesmo celular pode chegar da Z-API COM o 9 (55 + DDD + 9 + 8
+// dígitos = 13) ou SEM o 9 (55 + DDD + 8 = 12), dependendo da origem. Como
+// é a MESMA pessoa, geramos as duas formas pra comparar/procurar por
+// qualquer uma delas e não duplicar lead. Conservador: só cria a variante
+// "com 9" quando o número parece mesmo celular (parte local começa em 6-9),
+// pra nunca confundir um fixo (começa em 2-5) com um celular.
+module.exports.variantesTelefone = function (telefone) {
+  const base = module.exports.normalizarTelefone(telefone);
+  const set = new Set([base]);
+  if (base.startsWith('55')) {
+    const resto = base.slice(2); // DDD + número local
+    if (resto.length === 11 && resto[2] === '9') {
+      // celular COM o 9 → variante SEM o 9
+      set.add('55' + resto.slice(0, 2) + resto.slice(3));
+    } else if (resto.length === 10 && /[6-9]/.test(resto[2])) {
+      // possível celular SEM o 9 → variante COM o 9
+      set.add('55' + resto.slice(0, 2) + '9' + resto.slice(2));
+    }
+  }
+  return [...set];
 };
 
 module.exports.getContatoPorTelefone = function (telefone) {

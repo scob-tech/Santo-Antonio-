@@ -836,6 +836,65 @@ async function carregarConteudoAnalise(id) {
   contEl.textContent = a.conteudo;
 }
 
+// ---------- Encaminhar mensagem ----------
+let encaminharMsgId = null;
+let encaminharTimer = null;
+
+function abrirEncaminhar(msgId) {
+  encaminharMsgId = msgId;
+  const busca = document.getElementById('encaminhar-busca');
+  busca.value = '';
+  document.getElementById('encaminhar-resultados').innerHTML =
+    `<div class="empty-state" style="font-size:12px;">Digite um nome ou telefone pra achar a conversa de destino.</div>`;
+  abrirModal('modal-encaminhar');
+  setTimeout(() => busca.focus(), 100);
+}
+
+function aoBuscarDestino(termo) {
+  clearTimeout(encaminharTimer);
+  const t = termo.trim();
+  const el = document.getElementById('encaminhar-resultados');
+  if (t.length < 2) {
+    el.innerHTML = `<div class="empty-state" style="font-size:12px;">Digite um nome ou telefone pra achar a conversa de destino.</div>`;
+    return;
+  }
+  encaminharTimer = setTimeout(async () => {
+    const res = await fetch(`${API}/api/encaminhar/destinos?q=${encodeURIComponent(t)}`);
+    if (!res.ok) { el.innerHTML = `<div class="empty-state" style="font-size:12px;">Erro na busca.</div>`; return; }
+    const itens = await res.json();
+    if (itens.length === 0) {
+      el.innerHTML = `<div class="empty-state" style="font-size:12px;">Nenhuma conversa encontrada.</div>`;
+      return;
+    }
+    el.innerHTML = itens.map((l) => `
+      <button class="link-mini" onclick="encaminharPara(${l.id})"
+        style="display:block; width:100%; text-align:left; padding:9px 10px; border-radius:8px; margin-bottom:5px; border:1px solid var(--border);">
+        <span style="font-weight:700; color:var(--text);">${escapeHtml(l.nome_cliente || l.telefone)}</span>
+        <span style="color:var(--muted); font-size:11px;"> · ${escapeHtml(l.setor_nome)}${l.is_grupo ? ' · grupo' : ''}</span>
+        <div style="color:var(--muted); font-size:11px;">${escapeHtml(l.telefone)}</div>
+      </button>`).join('');
+  }, 300);
+}
+
+async function encaminharPara(leadId) {
+  if (!encaminharMsgId) return;
+  const el = document.getElementById('encaminhar-resultados');
+  el.innerHTML = `<div class="empty-state" style="font-size:12px;">Encaminhando...</div>`;
+  const res = await fetch(`${API}/api/mensagens/${encaminharMsgId}/encaminhar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destino_lead_id: leadId }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.erro || 'Não consegui encaminhar.');
+    return;
+  }
+  fecharModal('modal-encaminhar');
+  encaminharMsgId = null;
+  alert(`Mensagem encaminhada para ${data.destino || 'a conversa'} ✅`);
+}
+
 function copiarAnaliseCustom() {
   const txt = document.getElementById('analise-custom-conteudo').textContent || '';
   const btn = document.getElementById('btn-copiar-analise-custom');
@@ -1100,10 +1159,16 @@ function renderizarConversa(lead) {
     }
 
     const podeEditarApagar = m.remetente === 'vendedor' && !m.apagada;
-    const acoesHtml = `<span class="balao-acoes"><span class="balao-btn-responder" onclick="iniciarResposta(${m.id})" title="Responder">↩</span>${podeEditarApagar ? `<span class="balao-btn-responder" onclick="abrirEditarMensagem(${m.id})" title="Editar">✏️</span>` : ''}${podeEditarApagar ? `<span class="balao-btn-responder" onclick="apagarMensagem(${m.id})" title="Apagar">🗑️</span>` : ''}</span>`;
+    const acoesHtml = `<span class="balao-acoes"><span class="balao-btn-responder" onclick="iniciarResposta(${m.id})" title="Responder">↩</span><span class="balao-btn-responder" onclick="abrirEncaminhar(${m.id})" title="Encaminhar">↪</span>${podeEditarApagar ? `<span class="balao-btn-responder" onclick="abrirEditarMensagem(${m.id})" title="Editar">✏️</span>` : ''}${podeEditarApagar ? `<span class="balao-btn-responder" onclick="apagarMensagem(${m.id})" title="Apagar">🗑️</span>` : ''}</span>`;
     const marcaEditada = m.editada && !m.apagada ? '<span style="opacity:.6; font-size:10px;"> (editada)</span>' : '';
 
-    return `<div class="balao ${classe} ${m.apagada ? 'balao-apagada' : ''}" id="msg-${m.id}">${acoesHtml}${citacaoHtml}${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}${marcaEditada}<div class="balao-hora">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</div></div>`;
+    let checkHtml = '';
+    if (m.remetente !== 'cliente' && m.status_entrega) {
+      if (m.status_entrega === 'lido') checkHtml = '<span class="balao-check lido" title="Lido">✓✓</span>';
+      else if (m.status_entrega === 'entregue') checkHtml = '<span class="balao-check" title="Entregue">✓✓</span>';
+      else checkHtml = '<span class="balao-check" title="Enviado">✓</span>';
+    }
+    return `<div class="balao ${classe} ${m.apagada ? 'balao-apagada' : ''}" id="msg-${m.id}">${acoesHtml}${citacaoHtml}${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}${marcaEditada}<div class="balao-hora"><span class="hora-txt">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</span>${checkHtml}</div></div>`;
   }).join('');
   msgsEl.scrollTop = msgsEl.scrollHeight;
 

@@ -360,6 +360,12 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   // de verdade, então não pode passar pela limpeza de dígitos.
   if (!isGrupo) telefone = db.normalizarTelefone(telefone);
 
+  // Formas equivalentes do número (com/sem o nono dígito) — a busca por lead
+  // existente compara por QUALQUER uma delas, pra não duplicar o mesmo cliente
+  // só porque a Z-API mandou o número num formato diferente da outra vez.
+  const variantesTel = isGrupo ? [telefone] : db.variantesTelefone(telefone);
+  const phTel = variantesTel.map(() => '?').join(',');
+
   // Contato já salvo pela equipe tem prioridade sobre o nome que vem do
   // WhatsApp (push name) — sem isso, toda mensagem nova ia sobrescrever o
   // nome que a equipe escolheu com o nome "de fábrica" do WhatsApp.
@@ -377,8 +383,8 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
   }
 
   const leadExistente = db.prepare(`
-    SELECT * FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
-  `).get(telefone, setorObj.id);
+    SELECT * FROM leads WHERE telefone IN (${phTel}) AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
+  `).get(...variantesTel, setorObj.id);
 
   if (leadExistente && leadExistente.status !== 'encerrado') {
     // Conversa já em aberto (novo ou em_atendimento) — só adiciona a mensagem
@@ -456,6 +462,23 @@ async function processarMensagemRecebida({ telefone, nome_cliente, texto, origem
     boasVindas = (iaResposta && iaResposta.boas_vindas) || ai.gerarMensagemBoasVindas(texto, nome_cliente);
   }
 
+  // Rede de segurança contra CORRIDA: entre a busca lá em cima e aqui teve um
+  // await (as boas-vindas da IA). Se nesse meio-tempo outra mensagem do MESMO
+  // cliente chegou em rajada (ex: instância reconectou e despejou várias de
+  // uma vez) e já criou o lead, gruda a mensagem nele em vez de criar um
+  // segundo. Não há await entre esta checagem e o INSERT abaixo, então do
+  // ponto de vista do event loop é atômico — a corrida não passa.
+  if (!isGrupo) {
+    const jaCriado = db.prepare(`
+      SELECT * FROM leads WHERE telefone IN (${phTel}) AND setor_id = ? AND status != 'encerrado' ORDER BY criado_em DESC LIMIT 1
+    `).get(...variantesTel, setorObj.id);
+    if (jaCriado) {
+      db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, zapi_message_id, responde_a) VALUES (?, 'cliente', ?, ?, ?, ?, ?)`)
+        .run(jaCriado.id, texto, midia_url || null, midia_tipo || null, zapiMessageId, respondeAResolvido);
+      return { lead_id: jaCriado.id, info: 'corrida evitada: mensagem grudada em lead recém-criado (não duplicado)' };
+    }
+  }
+
   const insertLead = db.prepare(`
     INSERT INTO leads (telefone, nome_cliente, primeira_mensagem, origem, status, interesse, setor_id, is_grupo)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -518,9 +541,13 @@ function criarHandlerWebhookZapi(setor) {
         // qual for o status — antes só pegava "em_atendimento", e uma
         // resposta manual num lead ainda "novo" (ninguém puxou ainda)
         // ficava de fora do sistema, mesmo tendo sido enviada de verdade.
+        // Compara pelas variantes do número (com/sem o nono dígito) pra
+        // achar o lead certo mesmo se o formato vier diferente.
+        const varsManual = isGrupo ? [telefone] : db.variantesTelefone(telefone);
+        const phManual = varsManual.map(() => '?').join(',');
         const leadAtivo = db.prepare(`
-          SELECT * FROM leads WHERE telefone = ? AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
-        `).get(telefone, setorObj.id);
+          SELECT * FROM leads WHERE telefone IN (${phManual}) AND setor_id = ? ORDER BY criado_em DESC LIMIT 1
+        `).get(...varsManual, setorObj.id);
         if (leadAtivo && leadAtivo.status !== 'encerrado') {
           // Segunda camada de proteção contra duplicação: mesmo que o
           // messageId da Z-API não tenha batido com o que registramos no
@@ -1054,10 +1081,120 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
   // se alguém responder a ESSA mensagem depois, também vira citação de
   // verdade no WhatsApp (não só nas respostas ao cliente).
   if (envio.messageId) {
-    db.prepare(`UPDATE mensagens SET zapi_message_id = ? WHERE id = ?`).run(envio.messageId, info.lastInsertRowid);
+    // Já nasce como 'enviado' — o webhook de status depois promove pra
+    // 'entregue' e 'lido' conforme o cliente recebe/abre.
+    db.prepare(`UPDATE mensagens SET zapi_message_id = ?, status_entrega = 'enviado' WHERE id = ?`).run(envio.messageId, info.lastInsertRowid);
+  } else if (envio.enviado) {
+    db.prepare(`UPDATE mensagens SET status_entrega = 'enviado' WHERE id = ?`).run(info.lastInsertRowid);
   }
 
   res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado });
+});
+
+// ---------------------------------------------------------------
+// WEBHOOK DE STATUS (confirmação de entrega/leitura da Z-API)
+// A Z-API chama esta URL quando o status de uma mensagem NOSSA muda. Como o
+// messageId é global, uma única URL serve pras 3 instâncias (Vendas,
+// Financeiro, Expedição) — é só apontar o webhook "Ao enviar status da
+// mensagem" de cada instância pra cá. O :setor no fim é opcional e ignorado
+// (só pra quem preferir uma URL por setor).
+// ---------------------------------------------------------------
+function handlerStatusZapi(req, res) {
+  const { status, ids } = zapi.interpretarStatus(req.body);
+  if (!status || ids.length === 0) {
+    return res.status(200).json({ info: 'status sem id reconhecível, ignorado' });
+  }
+  const novo = zapi.mapearStatusEntrega(status);
+  if (!novo) {
+    return res.status(200).json({ info: `status "${status}" não mapeado, ignorado` });
+  }
+  // Nunca regride (uma confirmação de 'entregue' que chega atrasada não pode
+  // apagar um 'lido' que já veio). Rank: enviado<entregue<lido.
+  const rankNovo = { enviado: 1, entregue: 2, lido: 3 }[novo];
+  const upd = db.prepare(`
+    UPDATE mensagens SET status_entrega = ?
+    WHERE zapi_message_id = ?
+      AND COALESCE(CASE status_entrega WHEN 'enviado' THEN 1 WHEN 'entregue' THEN 2 WHEN 'lido' THEN 3 END, 0) < ?
+  `);
+  let atualizadas = 0;
+  for (const id of ids) atualizadas += upd.run(novo, id, rankNovo).changes;
+  res.status(200).json({ ok: true, status: novo, atualizadas });
+}
+app.post('/webhook/zapi-status', handlerStatusZapi);
+app.post('/webhook/zapi-status/:setor', handlerStatusZapi);
+
+// ---------------------------------------------------------------
+// ENCAMINHAR MENSAGEM — copia uma mensagem (texto e/ou mídia) pra QUALQUER
+// conversa de QUALQUER setor e a envia de verdade pela instância Z-API do
+// setor de destino. Busca de destino é cross-setor de propósito.
+// ---------------------------------------------------------------
+app.get('/api/encaminhar/destinos', requireAuth, (req, res) => {
+  const termo = (req.query.q || '').trim();
+  if (termo.length < 2) return res.json([]);
+  const leads = db.prepare(`
+    SELECT leads.id, leads.nome_cliente, leads.telefone, leads.is_grupo, leads.status,
+           setores.nome AS setor_nome, setores.slug AS setor_slug
+    FROM leads JOIN setores ON setores.id = leads.setor_id
+    WHERE (leads.nome_cliente LIKE ? OR leads.telefone LIKE ?)
+    ORDER BY leads.criado_em DESC LIMIT 30
+  `).all(`%${termo}%`, `%${termo}%`);
+  res.json(leads);
+});
+
+app.post('/api/mensagens/:id/encaminhar', requireAuth, async (req, res) => {
+  const origem = db.prepare('SELECT * FROM mensagens WHERE id = ?').get(req.params.id);
+  if (!origem) return res.status(404).json({ erro: 'mensagem não encontrada' });
+  if (origem.apagada) return res.status(400).json({ erro: 'não dá pra encaminhar uma mensagem apagada' });
+
+  // A pessoa precisa ter acesso ao setor de ORIGEM (de onde a mensagem saiu);
+  // o DESTINO pode ser qualquer setor (é o objetivo do recurso).
+  const leadOrigem = db.prepare('SELECT * FROM leads WHERE id = ?').get(origem.lead_id);
+  if (leadOrigem && !usuarioAcessaLead(req.usuario, leadOrigem)) {
+    return res.status(403).json({ erro: 'você não tem acesso à conversa de origem dessa mensagem' });
+  }
+
+  const destino = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.body.destino_lead_id);
+  if (!destino) return res.status(404).json({ erro: 'conversa de destino não encontrada' });
+
+  const setorDestino = destino.setor_id ? db.prepare('SELECT slug, nome FROM setores WHERE id = ?').get(destino.setor_id) : null;
+  const slugDestino = setorDestino ? setorDestino.slug : 'vendas';
+
+  // Tira o prefixo interno "*Fulano Setor:*" da mensagem original (se tiver) —
+  // o prefixo certo do setor de DESTINO é recolocado abaixo.
+  const textoOriginal = (origem.texto || '').replace(/^\*[^*]+:\*\n/, '');
+  const temMidia = Boolean(origem.midia_url);
+  if (!textoOriginal.trim() && !temMidia) {
+    return res.status(400).json({ erro: 'essa mensagem não tem conteúdo pra encaminhar' });
+  }
+
+  let textoSalvo = textoOriginal;
+  let textoParaEnviar = textoOriginal;
+  if (setorDestino && setorDestino.slug !== 'vendas') {
+    const primeiroNome = req.usuario.nome.split(' ')[0];
+    const prefixo = `*${primeiroNome} ${setorDestino.nome}:*\n`;
+    textoSalvo = prefixo + textoOriginal;
+    textoParaEnviar = prefixo + textoOriginal;
+  }
+
+  // Escrever numa conversa encerrada reabre ela (mesma regra do envio normal).
+  if (destino.status === 'encerrado') {
+    db.prepare(`UPDATE leads SET status = 'em_atendimento' WHERE id = ?`).run(destino.id);
+  }
+
+  const info = db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo, midia_nome) VALUES (?, 'vendedor', ?, ?, ?, ?)`)
+    .run(destino.id, textoSalvo, origem.midia_url || null, origem.midia_tipo || null, origem.midia_nome || null);
+
+  const envio = temMidia
+    ? await zapi.enviarMidiaWhatsapp(destino.telefone, origem.midia_tipo, origem.midia_url, origem.midia_nome, textoParaEnviar, slugDestino, null)
+    : await zapi.enviarMensagemWhatsapp(destino.telefone, textoParaEnviar, slugDestino, null);
+
+  if (envio.messageId) {
+    db.prepare(`UPDATE mensagens SET zapi_message_id = ?, status_entrega = 'enviado' WHERE id = ?`).run(envio.messageId, info.lastInsertRowid);
+  } else if (envio.enviado) {
+    db.prepare(`UPDATE mensagens SET status_entrega = 'enviado' WHERE id = ?`).run(info.lastInsertRowid);
+  }
+
+  res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado, destino: destino.nome_cliente || destino.telefone });
 });
 
 // ---------------------------------------------------------------
