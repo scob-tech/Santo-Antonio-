@@ -1880,6 +1880,15 @@ app.post('/api/contatos', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Editar contato salvo — trocar nome e/ou número (pedido do Financeiro).
+app.put('/api/contatos/:id', requireAuth, (req, res) => {
+  const { nome, telefone } = req.body;
+  if (!nome || !telefone) return res.status(400).json({ erro: 'nome e telefone são obrigatórios' });
+  const r = db.editarContato(req.params.id, nome, telefone);
+  if (r.erro) return res.status(/já existe/.test(r.erro) ? 409 : 400).json(r);
+  res.json(r);
+});
+
 // ---------------------------------------------------------------
 // RELATÓRIO DE USO — página HTML pronta, pra abrir direto no navegador
 // (inclusive do celular) sem precisar de terminal/console. Só admin.

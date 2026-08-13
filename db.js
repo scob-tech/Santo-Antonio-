@@ -434,3 +434,38 @@ module.exports.salvarContato = function (telefone, nome, criadoPor) {
   `).run(limpo, nome, criadoPor || null);
   db.prepare(`UPDATE leads SET nome_cliente = ? WHERE telefone = ?`).run(nome, limpo);
 };
+
+// Edita um contato já salvo: troca o nome e/ou o número. Se o número mudou,
+// as conversas que estavam no número antigo são movidas pro novo (comparando
+// pelas variantes com/sem o nono dígito), pra continuarem ligadas ao contato.
+// Recusa se o número novo já pertencer a OUTRO contato (o telefone é único).
+// Retorna { ok } ou { erro }.
+module.exports.editarContato = function (id, nome, telefoneNovo) {
+  const atual = db.prepare(`SELECT * FROM contatos WHERE id = ?`).get(id);
+  if (!atual) return { erro: 'contato não encontrado' };
+
+  const nomeLimpo = String(nome || '').trim();
+  if (!nomeLimpo) return { erro: 'o nome não pode ficar em branco' };
+
+  const telNovo = module.exports.normalizarTelefone(telefoneNovo);
+  if (!telNovo || telNovo.replace(/\D/g, '').length < 8) return { erro: 'telefone inválido' };
+
+  const mudouNumero = telNovo !== atual.telefone;
+  if (mudouNumero) {
+    const jaExiste = db.prepare(`SELECT id FROM contatos WHERE telefone = ? AND id != ?`).get(telNovo, id);
+    if (jaExiste) return { erro: 'já existe outro contato salvo com esse número' };
+    // Move as conversas do número antigo pro novo (com variantes do nono dígito).
+    const varsAntigo = module.exports.variantesTelefone(atual.telefone);
+    const ph = varsAntigo.map(() => '?').join(',');
+    db.prepare(`UPDATE leads SET telefone = ? WHERE telefone IN (${ph})`).run(telNovo, ...varsAntigo);
+  }
+
+  db.prepare(`UPDATE contatos SET nome = ?, telefone = ? WHERE id = ?`).run(nomeLimpo, telNovo, id);
+
+  // Propaga o nome novo pras conversas que estão nesse número.
+  const varsNovo = module.exports.variantesTelefone(telNovo);
+  const ph2 = varsNovo.map(() => '?').join(',');
+  db.prepare(`UPDATE leads SET nome_cliente = ? WHERE telefone IN (${ph2})`).run(nomeLimpo, ...varsNovo);
+
+  return { ok: true, id, nome: nomeLimpo, telefone: telNovo };
+};

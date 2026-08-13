@@ -206,16 +206,57 @@ async function carregarContatos(termoBusca) {
   document.getElementById('contatos-titulo').textContent = `Contatos (${contatos.length})`;
 
   el.innerHTML = contatos.length > 0
-    ? contatos.map((c) => `
-      <li class="conv-item" onclick="abrirConversaPorTelefone('${c.telefone}', '${escapeHtml(c.nome).replace(/'/g, "\\'")}')">
+    ? contatos.map((c) => {
+      const nomeEsc = escapeHtml(c.nome).replace(/'/g, "\\'");
+      return `
+      <li class="conv-item" onclick="abrirConversaPorTelefone('${c.telefone}', '${nomeEsc}')">
         <div class="conv-avatar" style="background:${corAvatar(c.id)};">${escapeHtml(iniciais(c.nome))}</div>
         <div class="conv-main">
           <div class="conv-name">${escapeHtml(c.nome)}</div>
           <p class="conv-preview">${escapeHtml(c.telefone)}</p>
         </div>
+        <button class="link-mini" title="Editar contato" style="flex-shrink:0; padding:6px;"
+          onclick="event.stopPropagation(); abrirEditarContato(${c.id}, '${nomeEsc}', '${c.telefone}')">✏️</button>
       </li>
-    `).join('')
+    `; }).join('')
     : `<li class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhum contato encontrado.' : 'Nenhum contato salvo ainda. Use "Salvar contato" numa conversa, ou "+ Criar Contato" na tela de Início.'}</li>`;
+}
+
+// Editar contato salvo — trocar nome e/ou número.
+let editarContatoId = null;
+function abrirEditarContato(id, nome, telefone) {
+  editarContatoId = id;
+  document.getElementById('editar-contato-nome').value = nome || '';
+  document.getElementById('editar-contato-telefone').value = telefone || '';
+  const erroEl = document.getElementById('editar-contato-erro');
+  erroEl.style.display = 'none';
+  abrirModal('modal-editar-contato');
+}
+
+async function confirmarEditarContato() {
+  const nome = document.getElementById('editar-contato-nome').value.trim();
+  const telefone = document.getElementById('editar-contato-telefone').value.trim();
+  const erroEl = document.getElementById('editar-contato-erro');
+  if (!nome || !telefone) {
+    erroEl.textContent = 'Preencha o nome e o telefone.';
+    erroEl.style.display = 'block';
+    return;
+  }
+  const res = await fetch(`${API}/api/contatos/${editarContatoId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome, telefone }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    erroEl.textContent = data.erro || 'Não consegui salvar as alterações.';
+    erroEl.style.display = 'block';
+    return;
+  }
+  fecharModal('modal-editar-contato');
+  editarContatoId = null;
+  const busca = document.getElementById('busca-contatos');
+  carregarContatos(busca && busca.value.trim() ? busca.value.trim() : undefined);
 }
 
 // Clicar num contato salvo tenta achar uma conversa existente com esse

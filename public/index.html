@@ -1311,6 +1311,23 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
+  <!-- Modal: editar contato salvo (nome e/ou número) -->
+  <div class="modal-overlay" id="modal-editar-contato">
+    <div class="modal-box">
+      <h3>✏️ Editar contato</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:-6px; margin-bottom:14px;">Troque o nome ou o número. Ao mudar o número, as conversas ligadas a esse contato passam a acompanhar o número novo.</p>
+      <label>Nome</label>
+      <input type="text" id="editar-contato-nome" placeholder="Nome do contato" />
+      <label>Telefone (com DDD)</label>
+      <input type="text" id="editar-contato-telefone" inputmode="tel" placeholder="Ex: 11 91234-5678" />
+      <div class="modal-erro" id="editar-contato-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-editar-contato')" style="flex:1;">Cancelar</button>
+        <button class="btn-primary" onclick="confirmarEditarContato()" style="flex:1;">Salvar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: nova tarefa (agenda) -->
   <div class="modal-overlay" id="modal-tarefa">
     <div class="modal-box">
@@ -1478,6 +1495,6 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
-<script src="app.js?v=20260811c"></script>
+<script src="app.js?v=20260811d"></script>
 </body>
 </html>
