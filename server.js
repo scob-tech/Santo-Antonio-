@@ -519,8 +519,30 @@ app.post('/webhook/message', async (req, res) => {
 //   Vendas:     https://SEU-DOMINIO/webhook/zapi              (é a de sempre, não muda)
 //   Financeiro: https://SEU-DOMINIO/webhook/zapi/financeiro
 //   Expedição:  https://SEU-DOMINIO/webhook/zapi/expedicao
-function criarHandlerWebhookZapi(setor) {
-  return async (req, res) => {
+async function processarWebhookMensagem(req, res, setorDaUrl) {
+  {
+    // REDE DE SEGURANÇA CONTRA MISTURA DE SETORES:
+    // O setor correto é o DONO da instância que originou a mensagem, não o
+    // que está no endereço da URL. Se o link "Ao receber" no painel da Z-API
+    // estiver apontando pro lugar errado (ex: link do Financeiro colado na
+    // instância do Vendas), o instanceId no corpo do webhook ainda revela o
+    // setor de verdade — então descobrimos por ele e NUNCA misturamos.
+    // Só caímos no setor da URL se o instanceId não bater com nenhuma
+    // credencial conhecida (ex: instância nova ainda não cadastrada no env).
+    const instanceId = req.body && req.body.instanceId;
+    const setorRoteado = zapi.setorPorInstanceId(instanceId) || setorDaUrl;
+    if (setorDaUrl && setorRoteado !== setorDaUrl) {
+      console.warn(`>> [ROTEAMENTO] Webhook chegou na URL de "${setorDaUrl}" mas o instanceId pertence a "${setorRoteado}" — roteando pro setor correto. Verifique o link "Ao receber" no painel da Z-API.`);
+    }
+    const setor = setorRoteado;
+    // Se não deu pra descobrir o setor (instanceId desconhecido e sem setor na
+    // URL — acontece quando uma mensagem cai no endereço /webhook/zapi-status
+    // por engano e a instância nem está cadastrada), ignora com segurança em
+    // vez de chutar um setor e arriscar misturar.
+    if (!setor) {
+      return res.status(200).json({ info: 'sem setor identificável (instanceId desconhecido), ignorado' });
+    }
+
     const { telefone, nomeCliente, texto, midiaUrl, midiaTipo, messageId, fromMe, isGrupo, referenceMessageId } = zapi.interpretarWebhook(req.body);
     const setorObj = db.getSetorPorSlug(setor);
 
@@ -596,7 +618,11 @@ function criarHandlerWebhookZapi(setor) {
       zapiReferenceMessageId: referenceMessageId,
     });
     res.status(200).json(resultado);
-  };
+  }
+}
+
+function criarHandlerWebhookZapi(setorDaUrl) {
+  return (req, res) => processarWebhookMensagem(req, res, setorDaUrl);
 }
 
 app.post('/webhook/zapi', criarHandlerWebhookZapi('vendas'));
@@ -882,6 +908,34 @@ app.post('/api/leads/:id/transferir', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Move uma conversa INTEIRA de um setor pra outro (Vendas ↔ Financeiro ↔
+// Expedição). Serve pra separar conversas que caíram no setor errado — por
+// exemplo, se o link "Ao receber" da Z-API estava trocado e mensagens do
+// Vendas entraram no Financeiro. Só admin/gestor pode fazer isso.
+// Ao mover, o dono (vendedor) é zerado, porque ele é de outro setor e não
+// deve continuar "dono" de uma conversa que agora pertence a outro time.
+app.post('/api/leads/:id/mover-setor', requireAuth, requireAdmin, (req, res) => {
+  const { setor_destino } = req.body; // slug: 'vendas' | 'financeiro' | 'expedicao'
+  if (!setor_destino) return res.status(400).json({ erro: 'informe o setor de destino' });
+
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+
+  const setorDest = db.getSetorPorSlug(setor_destino);
+  if (!setorDest) return res.status(404).json({ erro: 'setor de destino não existe' });
+  if (setorDest.id === lead.setor_id) {
+    return res.status(400).json({ erro: 'a conversa já está nesse setor' });
+  }
+
+  // Mantém o status (novo/em_atendimento/encerrado) mas zera o dono, já que
+  // o vendedor anterior é de outro setor. Fica disponível pra quem for do
+  // setor de destino puxar.
+  db.prepare(`UPDATE leads SET setor_id = ?, vendedor_id = NULL WHERE id = ?`)
+    .run(setorDest.id, req.params.id);
+
+  res.json({ ok: true, setor: setorDest.slug, nome_setor: setorDest.nome });
+});
+
 // Vendedor registra um lead manualmente (cliente que veio por outro canal —
 // telefone, presencial). Fica marcado como "nota" — não dispara mensagem
 // nenhuma pro WhatsApp sozinho. Se o vendedor quiser mandar mensagem de
@@ -1114,9 +1168,22 @@ app.post('/api/leads/:id/mensagens', requireAuth, async (req, res) => {
 // mensagem" de cada instância pra cá. O :setor no fim é opcional e ignorado
 // (só pra quem preferir uma URL por setor).
 // ---------------------------------------------------------------
-function handlerStatusZapi(req, res) {
+async function handlerStatusZapi(req, res) {
   const { status, ids } = zapi.interpretarStatus(req.body);
   if (!status || ids.length === 0) {
+    // REDE DE SEGURANÇA: se um payload de MENSAGEM (recebida ou resposta
+    // manual) caiu aqui no endereço de status por engano — porque o link
+    // "Ao receber" da instância foi apontado pro /webhook/zapi-status — não
+    // perde a mensagem. Reencaminha pro processamento normal, roteando pelo
+    // instanceId pro setor certo. Só faz isso se o instanceId for conhecido,
+    // pra nunca chutar setor e arriscar misturar.
+    const msg = zapi.interpretarWebhook(req.body);
+    const instanceId = req.body && req.body.instanceId;
+    const pareceMensagem = Boolean(msg.telefone && (msg.texto || msg.midiaUrl));
+    if (pareceMensagem && zapi.setorPorInstanceId(instanceId)) {
+      console.warn('>> [ROTEAMENTO] Mensagem caiu no endereço de status (-status) por engano — reencaminhando pro setor correto pelo instanceId. Corrija o link "Ao receber" dessa instância na Z-API.');
+      return processarWebhookMensagem(req, res, null);
+    }
     return res.status(200).json({ info: 'status sem id reconhecível, ignorado' });
   }
   const novo = zapi.mapearStatusEntrega(status);

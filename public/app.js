@@ -1374,6 +1374,8 @@ function renderizarConversa(lead) {
   sugestaoBox.style.display = 'none';
   sugestaoBox.innerHTML = '';
   document.getElementById('btn-excluir-lead').style.display = usuarioAtual.role === 'admin' ? 'inline-block' : 'none';
+  const btnMover = document.getElementById('btn-mover-setor');
+  if (btnMover) btnMover.style.display = (usuarioAtual.role === 'admin' && lead.status !== 'encerrado') ? 'inline-block' : 'none';
   removerAnexo();
 }
 
@@ -2142,6 +2144,51 @@ async function confirmarTransferencia() {
   }
 
   fecharModal('modal-transferir');
+  fecharModal('modal-conversa');
+  atualizarTudo();
+}
+
+// ---------------- Mover conversa de setor (admin) ----------------
+async function abrirMoverSetor() {
+  if (!leadConversaAtual) return;
+  const sel = document.getElementById('mv-setor');
+  const erroEl = document.getElementById('mv-erro');
+  erroEl.style.display = 'none';
+  sel.innerHTML = `<option value="">Carregando…</option>`;
+  abrirModal('modal-mover-setor');
+  try {
+    const res = await fetch(`${API}/api/setores`);
+    const setores = await res.json();
+    const outros = (Array.isArray(setores) ? setores : []).filter(s => s.id !== leadConversaAtual.setor_id);
+    sel.innerHTML = outros.length > 0
+      ? outros.map(s => `<option value="${s.slug}">${escapeHtml(s.nome)}</option>`).join('')
+      : `<option value="">Nenhum outro setor disponível</option>`;
+  } catch (e) {
+    sel.innerHTML = `<option value="">Erro ao carregar setores</option>`;
+  }
+}
+
+async function confirmarMoverSetor() {
+  if (!leadConversaAtual) return;
+  const setor_destino = document.getElementById('mv-setor').value;
+  const erroEl = document.getElementById('mv-erro');
+  if (!setor_destino) {
+    erroEl.textContent = 'Selecione o setor de destino.';
+    erroEl.style.display = 'block';
+    return;
+  }
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mover-setor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ setor_destino }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    erroEl.textContent = err.erro || 'Erro ao mover de setor';
+    erroEl.style.display = 'block';
+    return;
+  }
+  fecharModal('modal-mover-setor');
   fecharModal('modal-conversa');
   atualizarTudo();
 }

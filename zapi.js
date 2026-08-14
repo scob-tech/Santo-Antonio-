@@ -43,6 +43,20 @@ function configuradoPara(setor) {
   return Boolean(c && c.instanceId && c.token);
 }
 
+// Descobre a qual setor pertence um instanceId da Z-API. Todo webhook "ao
+// receber" traz o instanceId da instância que originou a mensagem, então
+// mesmo que o link "Ao receber" no painel da Z-API esteja apontando pro
+// endereço errado (ex: o link do Financeiro colado na instância do Vendas),
+// o sistema descobre sozinho o setor de verdade pela credencial e NÃO
+// mistura mais os setores. É a rede de segurança contra erro de configuração.
+function setorPorInstanceId(instanceId) {
+  if (!instanceId) return null;
+  for (const setor of Object.keys(CREDENCIAIS_POR_SETOR)) {
+    if (CREDENCIAIS_POR_SETOR[setor].instanceId === instanceId) return setor;
+  }
+  return null;
+}
+
 // Compatibilidade: `configurado` (sem parâmetro) continua existindo e
 // reflete só o Vendas, pra não quebrar nada que já lia essa propriedade.
 const configurado = configuradoPara('vendas');
@@ -308,4 +322,4 @@ function mapearStatusEntrega(statusCru) {
   return null;
 }
 
-module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, enviarFigurinhaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado, configuradoPara, interpretarStatus, mapearStatusEntrega };
+module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, enviarFigurinhaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado, configuradoPara, interpretarStatus, mapearStatusEntrega, setorPorInstanceId };

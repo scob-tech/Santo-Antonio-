@@ -319,7 +319,7 @@
   /* Esses dois abrem POR CIMA da caixa de conversa (que já é um modal) —
      sem isso, como vêm antes no HTML, a conversa desenhava por cima deles
      mesmo estando "atrás" na hierarquia de ações. */
-  #modal-transferir, #modal-encerrar, #modal-salvar-contato, #modal-editar-mensagem, #modal-encaminhar { z-index: 110; }
+  #modal-transferir, #modal-encerrar, #modal-salvar-contato, #modal-editar-mensagem, #modal-encaminhar, #modal-mover-setor { z-index: 110; }
   .modal-overlay.aberto { display: flex; }
   .modal-box {
     background: white; border-radius: 10px; padding: 24px; width: 100%; max-width: 380px;
@@ -1231,6 +1231,21 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
+  <!-- Modal: mover conversa de setor (admin) -->
+  <div class="modal-overlay" id="modal-mover-setor">
+    <div class="modal-box">
+      <h3>Mover conversa de setor</h3>
+      <p style="font-size:13px; color:#555; margin-top:-4px;">Use isto pra separar conversas que caíram no setor errado. A conversa inteira vai pro setor escolhido e fica disponível pra quem for daquele time.</p>
+      <label for="mv-setor">Mover para</label>
+      <select id="mv-setor"></select>
+      <div class="modal-erro" id="mv-erro"></div>
+      <div class="modal-actions">
+        <button class="cancelar" onclick="fecharModal('modal-mover-setor')">Cancelar</button>
+        <button onclick="confirmarMoverSetor()">Mover</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: editar cadastro (admin) -->
   <div class="modal-overlay" id="modal-editar-cadastro">
     <div class="modal-box">
@@ -1471,6 +1486,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
           <button class="btn-subtle" onclick="marcarComoNaoLida()">📩 Não lida</button>
           <button class="btn-subtle" onclick="sugerirTarefaIA()">🤖 Sugerir tarefa</button>
           <button class="btn-subtle" onclick="abrirTransferir()">Transferir</button>
+          <button class="btn-subtle" id="btn-mover-setor" onclick="abrirMoverSetor()" style="display:none;">↔️ Mover de setor</button>
           <button class="btn-subtle btn-subtle--encerrar" onclick="encerrarLeadDaConversa()">Encerrar conversa</button>
         </div>
         <button class="btn-subtle" id="btn-salvar-contato" onclick="abrirSalvarContato()" style="display:none; color:var(--navy); font-weight:700;">💾 Salvar contato</button>
@@ -1517,6 +1533,6 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
-<script src="app.js?v=20260811i"></script>
+<script src="app.js?v=20260814a"></script>
 </body>
 </html>
