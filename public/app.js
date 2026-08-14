@@ -1337,7 +1337,15 @@ function renderizarConversa(lead) {
     }
     return `<div class="balao ${classe} ${m.apagada ? 'balao-apagada' : ''}" id="msg-${m.id}">${acoesHtml}${citacaoHtml}${renderizarMidia(m)}${formatarTextoMensagem(m.texto)}${marcaEditada}<div class="balao-hora"><span class="hora-txt">${m.remetente === 'ia' ? 'IA · ' : ''}${hora}</span>${checkHtml}</div></div>`;
   }).join('');
-  msgsEl.scrollTop = msgsEl.scrollHeight;
+  // Vai pro fim (última mensagem). Como as imagens têm altura 0 até carregar,
+  // um scroll só "no fim" abre no meio da conversa — então re-scrolla depois
+  // do frame, com um respiro, e a cada imagem que termina de carregar.
+  const irParaOFim = () => { msgsEl.scrollTop = msgsEl.scrollHeight; };
+  irParaOFim();
+  requestAnimationFrame(irParaOFim);
+  setTimeout(irParaOFim, 150);
+  setTimeout(irParaOFim, 500);
+  msgsEl.querySelectorAll('img').forEach((img) => { if (!img.complete) img.addEventListener('load', irParaOFim, { once: true }); });
 
   const claimBox = document.getElementById('conversa-acao-claim');
   const respostaBox = document.getElementById('conversa-caixa-resposta');

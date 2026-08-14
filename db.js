@@ -302,6 +302,21 @@ if (!colunaExiste('leads', 'is_grupo')) {
 }
 
 // ---------------------------------------------------------------
+// ÍNDICES — sem eles, cada consulta "mensagens de um lead" varria a tabela
+// mensagens INTEIRA (que é enorme por causa das mídias em base64). Como a
+// lista de conversas roda isso pra cada lead a cada 3s, ficava cada vez mais
+// lento conforme os dados cresciam. Criar índice é seguro, idempotente e
+// deixa essas consultas praticamente instantâneas.
+// ---------------------------------------------------------------
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_mensagens_lead_id ON mensagens(lead_id);
+  CREATE INDEX IF NOT EXISTS idx_mensagens_zapi ON mensagens(zapi_message_id);
+  CREATE INDEX IF NOT EXISTS idx_leads_setor_status ON leads(setor_id, status);
+  CREATE INDEX IF NOT EXISTS idx_leads_telefone ON leads(telefone);
+  CREATE INDEX IF NOT EXISTS idx_leads_encerrado_em ON leads(encerrado_em);
+`);
+
+// ---------------------------------------------------------------
 // SETORES: cria os 3 setores padrão (se ainda não existirem) e faz o
 // backfill pra tudo que já existia antes desse conceito existir —
 // sem isso, todo lead e vendedor antigo ficaria "sem setor" e sumiria

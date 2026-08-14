@@ -677,9 +677,24 @@ app.get('/api/leads', requireAuth, (req, res) => {
         `).all(...statusList, setorAtivo.id);
       }
     } else {
-      // Conversas ativas (em_atendimento + encerrado): sem filtro de data,
-      // acumula tudo tipo WhatsApp — nunca some.
-      leads = db.prepare(`SELECT * FROM leads WHERE status IN (${placeholders}) AND setor_id = ? ORDER BY criado_em DESC`).all(...statusList, setorAtivo.id);
+      // Conversas ativas + histórico. Antes trazia TODO encerrado que já
+      // existiu (acumulava pra sempre) e rodava sub-consultas pra cada um a
+      // cada 3s — era o que deixava tudo lento conforme os dados cresciam.
+      // Agora: em_atendimento SEMPRE; encerrado só o recente (últimos 2 dias,
+      // que é o que a tela de fato mostra). Encerradas mais antigas continuam
+      // acessíveis pela BUSCA, que não tem esse limite.
+      const querEncerrado = statusList.includes('encerrado');
+      const outros = statusList.filter((s) => s !== 'encerrado');
+      const cond = [];
+      const params = [setorAtivo.id];
+      if (outros.length) {
+        cond.push(`status IN (${outros.map(() => '?').join(',')})`);
+        params.push(...outros);
+      }
+      if (querEncerrado) {
+        cond.push(`(status = 'encerrado' AND COALESCE(encerrado_em, criado_em) >= datetime('now','-2 days'))`);
+      }
+      leads = db.prepare(`SELECT * FROM leads WHERE setor_id = ? AND (${cond.join(' OR ')}) ORDER BY criado_em DESC`).all(...params);
     }
   } else {
     leads = db.prepare('SELECT * FROM leads WHERE setor_id = ? ORDER BY criado_em DESC').all(setorAtivo.id);
