@@ -51,6 +51,9 @@ const LABELS_TIPO = {
 
 function fecharModal(id) {
   document.getElementById(id).classList.remove('aberto');
+  // Ao fechar a conversa, esquece qual estava aberta — assim nenhuma
+  // atualização de rede atrasada pinta uma conversa "fantasma" por cima depois.
+  if (id === 'modal-conversa') leadConversaIdAlvo = null;
 }
 function abrirModal(id) {
   document.getElementById(id).classList.add('aberto');
@@ -1236,15 +1239,23 @@ function atualizarTemposLeads(el, ordenados) {
 
 // ---------------- Conversa completa (estilo WhatsApp) ----------------
 let leadConversaAtual = null;
+// Qual conversa a pessoa quer ver AGORA. É marcado na hora do clique (antes de
+// qualquer espera de rede). Toda resposta que volta é conferida contra isso:
+// se ela já trocou de conversa nesse meio-tempo, a resposta atrasada é
+// DESCARTADA — é o que impede uma conversa de "piscar" por cima da outra.
+let leadConversaIdAlvo = null;
 
 async function abrirConversa(leadId) {
+  leadConversaIdAlvo = leadId; // marca a intenção imediatamente
   const res = await fetch(`${API}/api/leads/${leadId}`);
+  if (leadConversaIdAlvo !== leadId) return; // já abriu outra no meio do caminho
   if (res.status === 401) return window.location.href = '/login.html';
   if (res.status === 403) {
     alert('Este lead já está sendo atendido por outro vendedor — sem acesso à conversa.');
     return;
   }
   const lead = await res.json();
+  if (leadConversaIdAlvo !== leadId) return; // conferência final antes de pintar
   leadConversaAtual = lead;
   cancelarResposta();
   renderizarConversa(lead);
@@ -2550,12 +2561,22 @@ async function atualizarConversaAberta() {
   const modal = document.getElementById('modal-conversa');
   if (!modal.classList.contains('aberto') || !leadConversaAtual) return;
 
-  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}`);
+  const idNoInicio = leadConversaAtual.id;
+  const res = await fetch(`${API}/api/leads/${idNoInicio}`);
   if (!res.ok) return;
-  const atualizado = await res.json();
 
-  // Só re-renderiza se realmente chegou mensagem nova — evita apagar o que
-  // o vendedor está digitando na caixa de resposta a cada 3 segundos
+  // DESCARTA a resposta se, durante o fetch, a pessoa trocou de conversa,
+  // encerrou/abriu outra, ou fechou o modal. Sem isso, a conversa antiga
+  // "piscava" por cima da nova e ainda apagava o que ela estava digitando.
+  if (!modal.classList.contains('aberto') || !leadConversaAtual
+      || leadConversaAtual.id !== idNoInicio || leadConversaIdAlvo !== idNoInicio) return;
+
+  const atualizado = await res.json();
+  if (!modal.classList.contains('aberto') || !leadConversaAtual
+      || leadConversaAtual.id !== idNoInicio || leadConversaIdAlvo !== idNoInicio) return;
+
+  // Só re-renderiza se realmente chegou mensagem nova (ou mudou o status) —
+  // evita apagar o que o vendedor está digitando na caixa de resposta.
   const tinhaAntes = leadConversaAtual.mensagens ? leadConversaAtual.mensagens.length : 0;
   const temAgora = atualizado.mensagens ? atualizado.mensagens.length : 0;
   if (temAgora !== tinhaAntes || atualizado.status !== leadConversaAtual.status) {
