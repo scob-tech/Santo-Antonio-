@@ -1880,6 +1880,138 @@ app.post('/api/contatos', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------------------------------------------------------------
+// ARMAZENAMENTO — relatório de espaço + compactação de mídia. A mídia que a
+// equipe ENVIA fica guardada em base64 dentro do banco (é o que mais pesa no
+// volume). Aqui o admin vê quanto isso ocupa, manda compactar as fotos
+// antigas (a recompressão em si roda no navegador, sem biblioteca no
+// servidor) e depois pede pra "encolher" o arquivo do banco (VACUUM).
+// ---------------------------------------------------------------
+const LIMITE_FOTO_GRANDE = 150000; // ~150KB de data URI = candidata a compactar
+
+app.get('/api/admin/armazenamento', requireAuth, requireAdmin, (req, res) => {
+  const pageCount = db.prepare('PRAGMA page_count').get().page_count || 0;
+  const pageSize = db.prepare('PRAGMA page_size').get().page_size || 0;
+  const bancoBytes = pageCount * pageSize;
+
+  const midia = db.prepare(`SELECT midia_tipo AS tipo, LENGTH(midia_url) AS tam FROM mensagens WHERE midia_url LIKE 'data:%'`).all();
+  let midiaBytes = 0;
+  const porTipo = {};
+  for (const m of midia) { midiaBytes += m.tam; porTipo[m.tipo || 'outro'] = (porTipo[m.tipo || 'outro'] || 0) + m.tam; }
+
+  const fotosGrandes = db.prepare(`
+    SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(midia_url)),0) AS soma FROM mensagens
+    WHERE midia_url LIKE 'data:image/jp%' AND LENGTH(midia_url) > ? AND midia_compactada = 0
+  `).get(LIMITE_FOTO_GRANDE);
+
+  res.json({
+    banco_bytes: bancoBytes,
+    midia_bytes: midiaBytes,
+    midia_qtd: midia.length,
+    por_tipo: porTipo,
+    fotos_grandes_qtd: fotosGrandes.n,
+    fotos_grandes_bytes: fotosGrandes.soma,
+  });
+});
+
+app.get('/api/admin/fotos-grandes', requireAuth, requireAdmin, (req, res) => {
+  const limite = Math.min(parseInt(req.query.limite, 10) || 8, 20);
+  const rows = db.prepare(`
+    SELECT id, midia_url FROM mensagens
+    WHERE midia_url LIKE 'data:image/jp%' AND LENGTH(midia_url) > ? AND midia_compactada = 0
+    ORDER BY LENGTH(midia_url) DESC LIMIT ?
+  `).all(LIMITE_FOTO_GRANDE, limite);
+  res.json(rows);
+});
+
+app.put('/api/admin/mensagens/:id/midia-compacta', requireAuth, requireAdmin, (req, res) => {
+  const { data_uri } = req.body;
+  const atual = db.prepare('SELECT LENGTH(midia_url) AS tam FROM mensagens WHERE id = ?').get(req.params.id);
+  if (!atual) return res.status(404).json({ erro: 'mensagem não encontrada' });
+  // Sempre marca como já processada (mesmo se não coube reduzir), pra não
+  // entrar em looping. Só troca a mídia se a nova versão for MENOR.
+  if (data_uri && /^data:image\//.test(data_uri) && data_uri.length < atual.tam) {
+    db.prepare('UPDATE mensagens SET midia_url = ?, midia_compactada = 1 WHERE id = ?').run(data_uri, req.params.id);
+    return res.json({ ok: true, de: atual.tam, para: data_uri.length });
+  }
+  db.prepare('UPDATE mensagens SET midia_compactada = 1 WHERE id = ?').run(req.params.id);
+  res.json({ ok: true, pulou: true });
+});
+
+app.post('/api/admin/compactar-banco', requireAuth, requireAdmin, (req, res) => {
+  const tam = () => (db.prepare('PRAGMA page_count').get().page_count || 0) * (db.prepare('PRAGMA page_size').get().page_size || 0);
+  try {
+    const antes = tam();
+    db.exec('VACUUM');
+    const depois = tam();
+    res.json({ ok: true, antes, depois, recuperado: Math.max(0, antes - depois) });
+  } catch (e) {
+    res.status(500).json({ erro: `não deu pra compactar o banco agora (${e.message}). Isso costuma ser falta de espaço livre no volume — aumente o volume um pouco e tente de novo.` });
+  }
+});
+
+// ---------------------------------------------------------------
+// FIGURINHAS (stickers da loja) — biblioteca gerenciada pelo admin. A imagem
+// fica guardada uma vez; ao enviar, a mensagem só referencia a figurinha
+// (não copia a imagem), pra não inchar o banco.
+// ---------------------------------------------------------------
+app.get('/api/figurinhas', requireAuth, (req, res) => {
+  res.json(db.prepare('SELECT id, nome FROM figurinhas ORDER BY id DESC').all());
+});
+
+app.get('/api/figurinhas/:id/img', requireAuth, (req, res) => {
+  const f = db.prepare('SELECT imagem FROM figurinhas WHERE id = ?').get(req.params.id);
+  if (!f) return res.status(404).end();
+  const m = /^data:([^;]+);base64,(.*)$/s.exec(f.imagem);
+  if (!m) return res.status(404).end();
+  res.setHeader('Content-Type', m[1]);
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.end(Buffer.from(m[2], 'base64'));
+});
+
+app.post('/api/figurinhas', requireAuth, requireAdmin, (req, res) => {
+  const { nome, imagem } = req.body;
+  if (!imagem || !/^data:image\//.test(imagem)) return res.status(400).json({ erro: 'imagem inválida' });
+  if (imagem.length > 800000) return res.status(400).json({ erro: 'figurinha muito grande — use uma imagem menor' });
+  const info = db.prepare(`INSERT INTO figurinhas (nome, imagem, criado_por, criado_em) VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))`)
+    .run((nome || '').trim() || null, imagem, req.usuario.id);
+  res.json({ ok: true, id: info.lastInsertRowid });
+});
+
+app.delete('/api/figurinhas/:id', requireAuth, requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM figurinhas WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Envia uma figurinha da biblioteca numa conversa.
+app.post('/api/leads/:id/figurinha', requireAuth, async (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  if (!usuarioAcessaLead(req.usuario, lead)) return res.status(403).json({ erro: 'este lead é de um setor que você não acessa' });
+  const dono = lead.vendedor_id === req.usuario.id || Boolean(lead.is_grupo);
+  if (!ehGestor(req.usuario) && !dono) return res.status(403).json({ erro: 'sem permissão pra esse lead' });
+
+  const fig = db.prepare('SELECT * FROM figurinhas WHERE id = ?').get(req.body.figurinha_id);
+  if (!fig) return res.status(404).json({ erro: 'figurinha não encontrada' });
+
+  const setorDoLead = lead.setor_id ? db.prepare('SELECT slug FROM setores WHERE id = ?').get(lead.setor_id) : null;
+  if (lead.status === 'encerrado') {
+    db.prepare(`UPDATE leads SET status = 'em_atendimento', vendedor_id = ? WHERE id = ?`).run(lead.vendedor_id || req.usuario.id, lead.id);
+  }
+
+  // Guarda só a referência da figurinha (sem copiar a imagem pro banco).
+  const info = db.prepare(`INSERT INTO mensagens (lead_id, remetente, texto, midia_url, midia_tipo) VALUES (?, 'vendedor', '', ?, 'sticker')`)
+    .run(lead.id, `/api/figurinhas/${fig.id}/img`);
+
+  const envio = await zapi.enviarFigurinhaWhatsapp(lead.telefone, fig.imagem, setorDoLead ? setorDoLead.slug : 'vendas');
+  if (envio.messageId) {
+    db.prepare(`UPDATE mensagens SET zapi_message_id = ?, status_entrega = 'enviado' WHERE id = ?`).run(envio.messageId, info.lastInsertRowid);
+  } else if (envio.enviado) {
+    db.prepare(`UPDATE mensagens SET status_entrega = 'enviado' WHERE id = ?`).run(info.lastInsertRowid);
+  }
+  res.status(201).json({ ok: true, enviado_whatsapp: envio.enviado });
+});
+
 // Editar contato salvo — trocar nome e/ou número (pedido do Financeiro).
 app.put('/api/contatos/:id', requireAuth, (req, res) => {
   const { nome, telefone } = req.body;

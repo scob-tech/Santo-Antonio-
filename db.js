@@ -150,6 +150,18 @@ db.exec(`
     criado_por INTEGER,
     gerado_em TEXT NOT NULL
   );
+
+  -- Biblioteca de figurinhas (stickers) da loja, cadastradas pelo admin. É um
+  -- conjunto pequeno e fixo — a imagem fica guardada UMA vez aqui; a mensagem
+  -- que envia a figurinha só guarda uma referência (/api/figurinhas/:id/img),
+  -- não uma cópia, pra não inchar o banco a cada envio.
+  CREATE TABLE IF NOT EXISTS figurinhas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT,
+    imagem TEXT NOT NULL,
+    criado_por INTEGER,
+    criado_em TEXT NOT NULL
+  );
 `);
 
 // ---------------------------------------------------------------
@@ -247,6 +259,12 @@ if (!colunaExiste('mensagens', 'zapi_message_id')) {
 // mensagens do cliente e enquanto o webhook de status não estiver configurado.
 if (!colunaExiste('mensagens', 'status_entrega')) {
   db.exec(`ALTER TABLE mensagens ADD COLUMN status_entrega TEXT`);
+}
+// Marca que a mídia dessa mensagem já passou pela compactação (recompressão
+// de foto antiga), pra não tentar de novo em looping — mesmo quando a foto,
+// depois de compactada, ainda ficou um pouco acima do limite de "grande".
+if (!colunaExiste('mensagens', 'midia_compactada')) {
+  db.exec(`ALTER TABLE mensagens ADD COLUMN midia_compactada INTEGER NOT NULL DEFAULT 0`);
 }
 // marca quando o dono (ou gestor) abriu a conversa pela última vez —
 // alimenta o badge de "mensagem não lida" nas Conversas Ativas

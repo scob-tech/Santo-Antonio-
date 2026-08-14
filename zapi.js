@@ -254,6 +254,35 @@ async function enviarMidiaWhatsapp(telefone, midiaTipo, dataUri, nomeArquivo, le
   }
 }
 
+// Manda uma figurinha (sticker) de verdade pro WhatsApp do cliente via o
+// endpoint send-sticker da Z-API. `imagem` pode ser um link ou um data URI
+// (base64) — usamos data URI, já que a figurinha vem da nossa biblioteca.
+async function enviarFigurinhaWhatsapp(telefone, imagem, setor = 'vendas') {
+  const cred = CREDENCIAIS_POR_SETOR[setor];
+  if (!configuradoPara(setor)) {
+    console.log(`>> [Z-API "${setor}" não configurada] figurinha NÃO enviada de verdade pra ${telefone}`);
+    return { enviado: false, motivo: 'zapi_nao_configurada' };
+  }
+  const url = `https://api.z-api.io/instances/${cred.instanceId}/token/${cred.token}/send-sticker`;
+  const headers = { 'Content-Type': 'application/json' };
+  if (cred.clientToken) headers['Client-Token'] = cred.clientToken;
+  const body = { phone: telefone, sticker: imagem };
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+      const erro = await res.text().catch(() => '');
+      console.error(`>> Falha ao enviar figurinha via Z-API [${setor}] (status ${res.status}): ${erro}`);
+      return { enviado: false, motivo: 'erro_zapi', status: res.status };
+    }
+    const data = await res.json().catch(() => null);
+    if (data && data.messageId) registrarComoEnviadaPorNos(data.messageId);
+    return { enviado: true, messageId: data ? data.messageId : null };
+  } catch (err) {
+    console.error(`>> Erro de rede ao enviar figurinha pela Z-API [${setor}]:`, err.message);
+    return { enviado: false, motivo: 'erro_rede' };
+  }
+}
+
 // Interpreta o webhook de STATUS da mensagem (confirmação de entrega/leitura).
 // A Z-API manda, quando o status de uma mensagem NOSSA muda, um payload de
 // "MessageStatusCallback" com o novo status e o(s) id(s) afetado(s). O nome
@@ -279,4 +308,4 @@ function mapearStatusEntrega(statusCru) {
   return null;
 }
 
-module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado, configuradoPara, interpretarStatus, mapearStatusEntrega };
+module.exports = { interpretarWebhook, enviarMensagemWhatsapp, enviarMidiaWhatsapp, enviarFigurinhaWhatsapp, jaProcessada, marcarProcessada, foiEnviadaPorNos, configurado, configuradoPara, interpretarStatus, mapearStatusEntrega };

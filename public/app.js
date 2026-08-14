@@ -415,6 +415,8 @@ function renderizarUserBox() {
     document.getElementById('btn-rodar-analise').style.display = 'inline-block';
     const painelCustom = document.getElementById('painel-analise-custom');
     if (painelCustom) painelCustom.style.display = 'block';
+    const btnArmaz = document.getElementById('btn-armazenamento');
+    if (btnArmaz) btnArmaz.style.display = 'inline-block';
   }
   if (usuarioAtual.role !== 'supervisor') {
     document.getElementById('btn-relatorio').style.display = 'inline-block';
@@ -936,6 +938,86 @@ async function encaminharPara(leadId) {
   alert(`Mensagem encaminhada para ${data.destino || 'a conversa'} ✅`);
 }
 
+// ---------- Armazenamento (só admin) ----------
+function fmtBytes(b) {
+  if (!b) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, n = b;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n < 10 && i > 0 ? 1 : 0) + ' ' + u[i];
+}
+
+async function abrirArmazenamento() {
+  abrirModal('modal-armazenamento');
+  document.getElementById('armazenamento-status').textContent = '';
+  await carregarArmazenamento();
+}
+
+async function carregarArmazenamento() {
+  const el = document.getElementById('armazenamento-info');
+  el.innerHTML = 'Carregando...';
+  const res = await fetch(`${API}/api/admin/armazenamento`);
+  if (!res.ok) { el.innerHTML = 'Erro ao carregar.'; return; }
+  const d = await res.json();
+  const tipos = Object.entries(d.por_tipo || {}).map(([t, b]) => `${t}: ${fmtBytes(b)}`).join(' · ') || '—';
+  el.innerHTML = `
+    <div class="relatorio-grid" style="grid-template-columns:1fr 1fr;">
+      <div class="relatorio-metric"><div class="valor">${fmtBytes(d.banco_bytes)}</div><div class="label">Tamanho do banco</div></div>
+      <div class="relatorio-metric"><div class="valor">${fmtBytes(d.midia_bytes)}</div><div class="label">Mídia guardada (${d.midia_qtd})</div></div>
+    </div>
+    <p style="font-size:12px; color:var(--muted); margin:4px 0 12px;">Por tipo: ${tipos}</p>
+    <div style="background:var(--bg); border-radius:8px; padding:12px; font-size:13px;">
+      <b>${d.fotos_grandes_qtd}</b> foto(s) grande(s) pra compactar — ~${fmtBytes(d.fotos_grandes_bytes)} agora.
+    </div>`;
+  document.getElementById('btn-compactar-fotos').disabled = d.fotos_grandes_qtd === 0;
+}
+
+let compactandoFotos = false;
+async function compactarFotosAntigas() {
+  if (compactandoFotos) return;
+  compactandoFotos = true;
+  const statusEl = document.getElementById('armazenamento-status');
+  const btn = document.getElementById('btn-compactar-fotos');
+  btn.disabled = true;
+  let feitas = 0, economizado = 0;
+  try {
+    while (true) {
+      const lote = await fetch(`${API}/api/admin/fotos-grandes?limite=6`).then((r) => r.json());
+      if (!Array.isArray(lote) || lote.length === 0) break;
+      for (const m of lote) {
+        const menor = await recomprimirImagemDataUri(m.midia_url);
+        const body = (menor && menor.length < m.midia_url.length) ? { data_uri: menor } : {};
+        const r = await fetch(`${API}/api/admin/mensagens/${m.id}/midia-compacta`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        }).then((x) => x.json()).catch(() => ({}));
+        if (r && r.de && r.para) economizado += (r.de - r.para);
+        feitas++;
+        statusEl.textContent = `Compactando... ${feitas} foto(s), ~${fmtBytes(economizado)} liberados.`;
+      }
+    }
+    statusEl.textContent = `Pronto! ${feitas} foto(s) compactada(s), ~${fmtBytes(economizado)} liberados no banco. Agora clique em "Recuperar espaço" pra devolver ao disco.`;
+    await carregarArmazenamento();
+  } catch (e) {
+    statusEl.textContent = 'Parou por um erro — pode clicar de novo pra continuar de onde parou.';
+  } finally {
+    compactandoFotos = false;
+    btn.disabled = false;
+  }
+}
+
+async function compactarBanco() {
+  const statusEl = document.getElementById('armazenamento-status');
+  const btn = document.getElementById('btn-compactar-banco');
+  btn.disabled = true;
+  statusEl.textContent = 'Recuperando espaço no disco (pode levar um minutinho)...';
+  const res = await fetch(`${API}/api/admin/compactar-banco`, { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  btn.disabled = false;
+  if (!res.ok) { statusEl.textContent = d.erro || 'Não consegui compactar agora.'; return; }
+  statusEl.textContent = `Banco compactado! Recuperado ~${fmtBytes(d.recuperado)} no disco.`;
+  await carregarArmazenamento();
+}
+
 function copiarAnaliseCustom() {
   const txt = document.getElementById('analise-custom-conteudo').textContent || '';
   const btn = document.getElementById('btn-copiar-analise-custom');
@@ -1087,6 +1169,16 @@ async function carregarLeads() {
   // Ordenados por quem chegou primeiro
   const ordenados = [...leads].sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
 
+  // Se o conteúdo (ids/ordem/nome/preview/limite) não mudou, não reconstrói —
+  // só atualiza os tempos. Evita trocar o HTML embaixo do dedo (clique no
+  // lead errado) e tira peso do refresh de 3s.
+  const sig = (noLimite ? '1' : '0') + '#' + ordenados.map((l) => `${l.id}~${l.nome_cliente || l.telefone}~${(l.primeira_mensagem || '').slice(0, 40)}`).join('|');
+  if (sig === sigLeads && el.querySelector('.lead-item')) {
+    atualizarTemposLeads(el, ordenados);
+    return;
+  }
+  sigLeads = sig;
+
   el.innerHTML = avisoLimite + ordenados.map(l => {
     const nome = l.nome_cliente || l.telefone;
 
@@ -1104,7 +1196,7 @@ async function carregarLeads() {
     const tagsHtml = tags.length ? `<div class="lead-tags">${tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : '';
 
     return `
-      <li class="lead-item ${noLimite ? 'lead-item--bloqueado' : ''}" onclick="${noLimite ? '' : `abrirConversa(${l.id})`}">
+      <li class="lead-item ${noLimite ? 'lead-item--bloqueado' : ''}" data-id="${l.id}" onclick="${noLimite ? '' : `abrirConversa(${l.id})`}">
         <div class="lead-avatar">${escapeHtml(iniciais(nome))}</div>
         <div class="lead-main">
           <div class="lead-top">
@@ -1117,6 +1209,29 @@ async function carregarLeads() {
       </li>
     `;
   }).join('');
+}
+
+// Assinaturas do que já está pintado em cada lista — se não mudou, a gente
+// NÃO reconstrói o HTML (era a reconstrução a cada 3s que trocava o item
+// embaixo do dedo e fazia o clique cair no lead errado; e ainda pesava à toa).
+let sigLeads = '', sigConvAtivas = '', sigHistorico = '';
+
+// Atualiza só o "há X min" de cada lead, sem reconstruir a lista (não quebra clique).
+function atualizarTemposLeads(el, ordenados) {
+  const porId = {};
+  ordenados.forEach((l) => { porId[l.id] = l; });
+  el.querySelectorAll('.lead-item').forEach((li) => {
+    const l = porId[li.dataset.id];
+    if (!l) return;
+    const span = li.querySelector('.lead-time');
+    if (!span) return;
+    const min = Math.floor((Date.now() - new Date(l.criado_em + 'Z')) / 60000);
+    let t;
+    if (min < 60) t = `${min} min`;
+    else if (min < 60 * 24) t = `${Math.floor(min / 60)} h`;
+    else { const d = Math.floor(min / (60 * 24)); t = `${d} dia${d === 1 ? '' : 's'}`; }
+    span.textContent = `${min >= 5 ? '⚠️ ' : ''}há ${t}`;
+  });
 }
 
 // ---------------- Conversa completa (estilo WhatsApp) ----------------
@@ -1307,20 +1422,56 @@ function tipoDoArquivo(mime) {
 // imagem final já nasce correta e não depende de mais ninguém respeitar
 // EXIF. Se o navegador não suportar (bem raro hoje em dia), cai de volta
 // pro comportamento antigo (manda o arquivo original sem mexer).
+// Tamanho/qualidade alvo pra foto enviada — encolhe fotos gigantes de celular
+// (3-5MB) pra ~150-300KB, mantendo boa visualização no chat e sem inchar o
+// banco. 1280px é mais que suficiente pra ver detalhe de material/orçamento.
+const MAX_DIM_IMG = 1280;
+const QUALIDADE_IMG = 0.72;
+
+// Desenha uma imagem/bitmap num canvas já redimensionado (lado maior <= maxDim,
+// preservando a proporção). Devolve o canvas pronto pra exportar.
+function desenharRedimensionado(fonte, maxDim) {
+  let w = fonte.width, h = fonte.height;
+  const maior = Math.max(w, h);
+  if (maior > maxDim) {
+    const escala = maxDim / maior;
+    w = Math.round(w * escala);
+    h = Math.round(h * escala);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(fonte, 0, 0, w, h);
+  return canvas;
+}
+
 async function corrigirOrientacaoImagem(arquivo) {
   try {
     const bitmap = await createImageBitmap(arquivo, { imageOrientation: 'from-image' });
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0);
+    const canvas = desenharRedimensionado(bitmap, MAX_DIM_IMG); // corrige rotação E encolhe
     bitmap.close();
-    return canvas.toDataURL('image/jpeg', 0.92);
+    return canvas.toDataURL('image/jpeg', QUALIDADE_IMG);
   } catch (err) {
-    console.warn('Não deu pra corrigir orientação da imagem, enviando original:', err);
+    console.warn('Não deu pra tratar a imagem, enviando original:', err);
     return null;
   }
+}
+
+// Recomprime uma foto que JÁ está salva (data URI) pra uma versão menor —
+// usado na compactação das fotos antigas. Roda no navegador (canvas), sem
+// nenhuma biblioteca no servidor. Devolve null se não conseguir carregar.
+function recomprimirImagemDataUri(dataUri) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = desenharRedimensionado(img, MAX_DIM_IMG);
+        resolve(canvas.toDataURL('image/jpeg', QUALIDADE_IMG));
+      } catch { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUri;
+  });
 }
 
 function renderizarPreviewAnexos() {
@@ -1390,46 +1541,185 @@ function removerAnexo(indice) {
   renderizarPreviewAnexos();
 }
 
+let enviandoMensagem = false;
 async function enviarMensagemConversa() {
+  // TRAVA: se já tem um envio em andamento, ignora. Junto com a limpeza
+  // imediata da caixa (logo abaixo), isso mata a duplicação de quando a
+  // pessoa aperta Enter várias vezes no delayzinho do envio — antes, cada
+  // Enter reenviava o mesmo texto e chegava repetido no cliente.
+  if (enviandoMensagem) return;
   const campoTexto = document.getElementById('conversa-texto');
   const texto = campoTexto.value.trim();
   if (!texto && anexosSelecionados.length === 0) return;
   if (!leadConversaAtual) return;
 
+  enviandoMensagem = true;
+  const btnEnviar = document.querySelector('.conversa-modal-reply button[type="submit"]');
+  if (btnEnviar) btnEnviar.disabled = true;
+
+  // Captura o conteúdo e LIMPA a caixa AGORA (antes de qualquer espera de
+  // rede). Assim, um Enter repetido durante o envio não encontra mais texto
+  // pra mandar.
   const respondeAId = respondendoA ? respondendoA.id : null;
-  let algumEnvioFalhou = false;
-
-  // Texto (se tiver) vai como mensagem própria, carregando a citação de
-  // resposta se houver uma ativa.
-  if (texto) {
-    const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, ...(respondeAId ? { responde_a: respondeAId } : {}) }),
-    });
-    if (!res.ok) { const err = await res.json(); alert(err.erro || 'Erro ao enviar mensagem'); algumEnvioFalhou = true; }
-  }
-
-  // Cada anexo vira uma mensagem própria — é assim que o WhatsApp
-  // realmente entrega quando manda vários arquivos de uma vez.
-  for (const anexo of anexosSelecionados) {
-    const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ midia_base64: anexo.dataUri, midia_tipo: anexo.tipo, midia_nome: anexo.nome }),
-    });
-    if (!res.ok) { algumEnvioFalhou = true; }
-  }
-  if (algumEnvioFalhou) alert('Uma ou mais mensagens não foram enviadas — confere a conversa.');
-
+  const anexos = anexosSelecionados.slice();
   campoTexto.value = '';
   campoTexto.style.height = 'auto';
   removerAnexo();
   cancelarResposta();
+
+  let algumEnvioFalhou = false;
+  let textoFalhou = false;
+  try {
+    if (texto) {
+      const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto, ...(respondeAId ? { responde_a: respondeAId } : {}) }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.erro || 'Erro ao enviar mensagem'); algumEnvioFalhou = true; textoFalhou = true; }
+    }
+
+    // Cada anexo vira uma mensagem própria — é assim que o WhatsApp
+    // realmente entrega quando manda vários arquivos de uma vez.
+    for (const anexo of anexos) {
+      const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/mensagens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ midia_base64: anexo.dataUri, midia_tipo: anexo.tipo, midia_nome: anexo.nome }),
+      });
+      if (!res.ok) { algumEnvioFalhou = true; }
+    }
+    if (algumEnvioFalhou) alert('Uma ou mais mensagens não foram enviadas — confere a conversa.');
+    // Se o TEXTO falhou, devolve ele pra caixa pra ela não perder o que escreveu.
+    if (textoFalhou && !campoTexto.value.trim()) { campoTexto.value = texto; ajustarAlturaTextarea(campoTexto); }
+
+    const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
+    leadConversaAtual = atualizado;
+    renderizarConversa(atualizado);
+    carregarLeads();
+  } finally {
+    enviandoMensagem = false;
+    if (btnEnviar) btnEnviar.disabled = false;
+  }
+}
+
+// ---------------- Emojis ----------------
+const EMOJIS = {
+  'Rostos': ['😀','😃','😄','😁','😆','😅','😂','🤣','🙂','😊','😉','😍','🥰','😘','😗','😋','😜','🤪','🤗','🤔','🤨','😐','😴','😌','😔','🙄','😬','😅','😳','🥺','😢','😭','😤','😠','😡','🤯','😱','😨','😰','😷','🤒','🥴','😇','🤠','😎','🥳','🙃'],
+  'Gestos': ['👍','👎','👌','🤌','✌️','🤞','🤙','👏','🙌','🙏','💪','👋','🤝','☝️','👇','👉','👈','✋','👊','🫶','🤲','💅'],
+  'Corações': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝'],
+  'Comemoração': ['🎉','🎊','✨','⭐','🌟','🔥','💯','✅','☑️','❌','⚠️','❗','❓','💡','🎁','🏆','🥇','📣','🔔','👀'],
+  'Loja / Obra': ['🏠','🏗️','🧱','🔨','🪚','🔧','🪛','🧰','🚚','📦','💰','💵','💳','🧾','📱','📞','📅','🕐','📍','📝','🖊️','✂️','☀️','🌧️'],
+};
+
+function alternarEmojis() {
+  const p = document.getElementById('emoji-painel');
+  const f = document.getElementById('figurinhas-painel'); if (f) f.style.display = 'none';
+  const abrir = p.style.display !== 'block';
+  p.style.display = abrir ? 'block' : 'none';
+  if (abrir && !p.dataset.montado) { montarEmojis(); p.dataset.montado = '1'; }
+}
+
+function montarEmojis() {
+  const p = document.getElementById('emoji-painel');
+  p.innerHTML = Object.entries(EMOJIS).map(([cat, lista]) => `
+    <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; margin:6px 2px 3px;">${cat}</div>
+    <div style="display:flex; flex-wrap:wrap; gap:1px;">
+      ${lista.map((e) => `<button type="button" onclick="inserirEmoji('${e}')" style="border:none; background:none; cursor:pointer; font-size:21px; line-height:1; padding:4px; border-radius:6px;">${e}</button>`).join('')}
+    </div>`).join('');
+}
+
+function inserirEmoji(emoji) {
+  const el = document.getElementById('conversa-texto');
+  const ini = el.selectionStart != null ? el.selectionStart : el.value.length;
+  const fim = el.selectionEnd != null ? el.selectionEnd : el.value.length;
+  el.value = el.value.slice(0, ini) + emoji + el.value.slice(fim);
+  const pos = ini + emoji.length;
+  el.selectionStart = el.selectionEnd = pos;
+  el.focus();
+  ajustarAlturaTextarea(el);
+}
+
+// ---------------- Figurinhas (stickers da loja) ----------------
+function alternarFigurinhas() {
+  const p = document.getElementById('figurinhas-painel');
+  const e = document.getElementById('emoji-painel'); if (e) e.style.display = 'none';
+  const abrir = p.style.display !== 'block';
+  p.style.display = abrir ? 'block' : 'none';
+  if (abrir) carregarFigurinhas();
+}
+
+async function carregarFigurinhas() {
+  const p = document.getElementById('figurinhas-painel');
+  p.innerHTML = 'Carregando...';
+  const res = await fetch(`${API}/api/figurinhas`);
+  const lista = res.ok ? await res.json() : [];
+  const ehAdmin = usuarioAtual && usuarioAtual.role === 'admin';
+  let html = '';
+  if (lista.length === 0) {
+    html += `<div class="empty-state" style="font-size:12px; border:none; padding:10px;">Nenhuma figurinha ainda.${ehAdmin ? ' Adicione abaixo 👇' : ' (o admin cadastra em Configurações)'}</div>`;
+  } else {
+    html += `<div style="display:flex; flex-wrap:wrap; gap:6px;">` + lista.map((f) => `
+      <div style="position:relative;">
+        <img src="${API}/api/figurinhas/${f.id}/img" title="${escapeHtml(f.nome || '')}" onclick="enviarFigurinha(${f.id})"
+          style="width:64px; height:64px; object-fit:contain; cursor:pointer; background:var(--bg); border-radius:8px; padding:4px;" />
+        ${ehAdmin ? `<button type="button" onclick="excluirFigurinha(${f.id})" title="Excluir figurinha" style="position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%; border:none; background:var(--red); color:white; font-size:10px; cursor:pointer; line-height:1; padding:0;">✕</button>` : ''}
+      </div>`).join('') + `</div>`;
+  }
+  if (ehAdmin) {
+    html += `<div style="margin-top:10px; border-top:1px solid var(--border); padding-top:8px;">
+      <button type="button" class="link-mini" onclick="document.getElementById('figurinha-arquivo').click()">➕ Adicionar figurinha</button>
+      <input type="file" id="figurinha-arquivo" style="display:none;" accept="image/*" onchange="adicionarFigurinha(event)" />
+    </div>`;
+  }
+  p.innerHTML = html;
+}
+
+async function enviarFigurinha(id) {
+  if (!leadConversaAtual || enviandoMensagem) return;
+  document.getElementById('figurinhas-painel').style.display = 'none';
+  const res = await fetch(`${API}/api/leads/${leadConversaAtual.id}/figurinha`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ figurinha_id: id }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) { alert(d.erro || 'Não consegui enviar a figurinha.'); return; }
   const atualizado = await (await fetch(`${API}/api/leads/${leadConversaAtual.id}`)).json();
   leadConversaAtual = atualizado;
   renderizarConversa(atualizado);
   carregarLeads();
+}
+
+function redimensionarParaFigurinha(arquivo) {
+  return new Promise((resolve) => {
+    const leitor = new FileReader();
+    leitor.onload = () => {
+      const img = new Image();
+      img.onload = () => { try { const c = desenharRedimensionado(img, 512); resolve(c.toDataURL('image/webp', 0.9)); } catch { resolve(null); } };
+      img.onerror = () => resolve(null);
+      img.src = leitor.result;
+    };
+    leitor.onerror = () => resolve(null);
+    leitor.readAsDataURL(arquivo);
+  });
+}
+
+async function adicionarFigurinha(event) {
+  const arquivo = event.target.files[0];
+  event.target.value = '';
+  if (!arquivo) return;
+  const dataUri = await redimensionarParaFigurinha(arquivo);
+  if (!dataUri) { alert('Não consegui ler essa imagem.'); return; }
+  const res = await fetch(`${API}/api/figurinhas`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imagem: dataUri }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.erro || 'Erro ao adicionar figurinha.'); return; }
+  carregarFigurinhas();
+}
+
+async function excluirFigurinha(id) {
+  if (!confirm('Excluir essa figurinha da loja?')) return;
+  await fetch(`${API}/api/figurinhas/${id}`, { method: 'DELETE' });
+  carregarFigurinhas();
 }
 
 // ---------------- Textarea: Shift+Enter quebra linha, Enter envia ----------------
@@ -1972,9 +2262,15 @@ async function carregarConversasAtivas(termoBusca) {
   const elAtivas = document.getElementById('conversas-ativas');
   const contagemEl = document.getElementById('conv-count');
   if (contagemEl) contagemEl.textContent = ativas.length;
-  elAtivas.innerHTML = ativas.length > 0
-    ? ativas.map(renderizarItemConversa).join('')
-    : `<li class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa ativa no momento.'}</li>`;
+  // Só repinta se mudou de verdade (ids/ordem/preview/não-lidas/aguardando) —
+  // não reconstrói a cada 3s embaixo do clique.
+  const sigA = (termoBusca || '') + '#' + ativas.map((l) => `${l.id}~${l.nao_lidas || 0}~${precisaResposta(l) ? 1 : 0}~${((l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem) || '').slice(0, 30)}`).join('|');
+  if (sigA !== sigConvAtivas || (ativas.length > 0 && !elAtivas.querySelector('.conv-item'))) {
+    sigConvAtivas = sigA;
+    elAtivas.innerHTML = ativas.length > 0
+      ? ativas.map(renderizarItemConversa).join('')
+      : `<li class="empty-state" style="padding:14px; font-size:12px;">${termoBusca ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa ativa no momento.'}</li>`;
+  }
 
   // --- Aba "Histórico": só encerrado, últimas 24h (a busca cobre o resto
   // — a não ser que ela esteja em uso, nesse caso quem manda é
@@ -1986,9 +2282,13 @@ async function carregarConversasAtivas(termoBusca) {
     const ha24h = Date.now() - 24 * 60 * 60 * 1000;
     const encerradasRecentes = leads.filter((l) => l.status === 'encerrado' && l.encerrado_em && new Date(l.encerrado_em + 'Z').getTime() >= ha24h);
     const encerradas = ordenarConversasPorAtividade(encerradasRecentes);
-    elHistorico.innerHTML = encerradas.length > 0
-      ? encerradas.map(renderizarItemConversa).join('')
-      : `<li class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa encerrada nas últimas 24h. Use a busca acima pra achar conversas mais antigas.</li>`;
+    const sigH = encerradas.map((l) => `${l.id}~${((l.ultima_mensagem ? l.ultima_mensagem.texto : l.primeira_mensagem) || '').slice(0, 30)}`).join('|');
+    if (sigH !== sigHistorico || (encerradas.length > 0 && !elHistorico.querySelector('.conv-item'))) {
+      sigHistorico = sigH;
+      elHistorico.innerHTML = encerradas.length > 0
+        ? encerradas.map(renderizarItemConversa).join('')
+        : `<li class="empty-state" style="padding:14px; font-size:12px;">Nenhuma conversa encerrada nas últimas 24h. Use a busca acima pra achar conversas mais antigas.</li>`;
+    }
   }
 }
 

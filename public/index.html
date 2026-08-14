@@ -934,6 +934,7 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
                 <button class="btn-primary btn-small" id="btn-relatorio" onclick="abrirRelatorio()" style="display:none;">📊 Relatório Diário</button>
                 <button class="btn-ghost btn-small" id="btn-rodar-analise" onclick="rodarAnaliseDiariaAgora()" style="display:none;">🤖 Gerar Análise</button>
                 <button class="btn-ghost btn-small" id="btn-historico-relatorios" onclick="abrirHistoricoRelatorios()" style="display:none;">📚 Histórico de Relatórios</button>
+                <button class="btn-ghost btn-small" id="btn-armazenamento" onclick="abrirArmazenamento()" style="display:none;">🗜️ Armazenamento</button>
               </div>
               <div id="painel-analise-custom" style="display:none; margin-top:16px; max-width:600px;">
                 <label style="display:block; font-size:12px; font-weight:700; color:var(--muted); margin-bottom:6px;">
@@ -1311,6 +1312,23 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
+  <!-- Modal: armazenamento (relatório de espaço + compactar mídia) -->
+  <div class="modal-overlay" id="modal-armazenamento">
+    <div class="modal-box" style="max-width:520px; width:92vw; display:flex; flex-direction:column; max-height:85vh;">
+      <h3>🗜️ Armazenamento</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:-8px; margin-bottom:14px;">A mídia enviada fica guardada no banco. Compacte as fotos antigas pra liberar espaço — sem apagar nada.</p>
+      <div id="armazenamento-info" style="overflow-y:auto;"></div>
+      <div id="armazenamento-status" style="font-size:12.5px; color:var(--navy); margin-top:12px; min-height:18px;"></div>
+      <div class="modal-actions" style="margin-top:14px; flex-wrap:wrap;">
+        <button class="btn-primary" id="btn-compactar-fotos" onclick="compactarFotosAntigas()" style="flex:1; min-width:150px;">🗜️ Compactar fotos antigas</button>
+        <button class="btn-ghost" id="btn-compactar-banco" onclick="compactarBanco()" style="flex:1; min-width:150px;">💾 Recuperar espaço</button>
+      </div>
+      <div class="modal-actions" style="margin-top:8px;">
+        <button class="cancelar" onclick="fecharModal('modal-armazenamento')" style="flex:1;">Fechar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: editar contato salvo (nome e/ou número) -->
   <div class="modal-overlay" id="modal-editar-contato">
     <div class="modal-box">
@@ -1483,8 +1501,12 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
             <button type="button" class="icon-btn" title="Tirar foto" onclick="document.getElementById('conversa-camera').click()">📷</button>
             <input type="file" id="conversa-camera" style="display:none;" onchange="selecionarAnexo(event)" accept="image/*" capture="environment" />
             <button type="button" class="icon-btn" id="btn-audio" title="Gravar áudio" onclick="alternarGravacaoAudio()">🎤</button>
+            <button type="button" class="icon-btn" id="btn-emoji" title="Emojis" onclick="alternarEmojis()">😀</button>
+            <button type="button" class="icon-btn" id="btn-figurinhas" title="Figurinhas" onclick="alternarFigurinhas()">🖼️</button>
             <div style="flex:1; min-width:0; position:relative;">
               <div id="conversa-mencoes-dropdown" style="display:none; position:absolute; bottom:100%; left:0; right:0; margin-bottom:6px; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.12); max-height:160px; overflow-y:auto; z-index:5;"></div>
+              <div id="emoji-painel" style="display:none; position:absolute; bottom:100%; left:0; right:0; margin-bottom:6px; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.12); max-height:240px; overflow-y:auto; z-index:6; padding:8px;"></div>
+              <div id="figurinhas-painel" style="display:none; position:absolute; bottom:100%; left:0; right:0; margin-bottom:6px; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.12); max-height:240px; overflow-y:auto; z-index:6; padding:10px;"></div>
               <textarea id="conversa-texto" class="conversa-modal-input" rows="2" placeholder="Digite uma mensagem... (Shift+Enter pra quebrar linha)" autocomplete="off" oninput="aoDigitarMensagem(this)" onkeydown="aoTeclarMensagem(event)"></textarea>
             </div>
             <button type="submit" class="btn-primary">Enviar</button>
@@ -1495,6 +1517,6 @@ body.tema-escuro .btn-ghost { background: var(--card); color: var(--text); }
     </div>
   </div>
 
-<script src="app.js?v=20260811d"></script>
+<script src="app.js?v=20260811g"></script>
 </body>
 </html>
