@@ -1,21 +1,20 @@
 {
-  "name": "santo-antonio-ia",
-  "version": "0.1.0",
-  "description": "Sistema de IA para atendimento via WhatsApp - MVP local (sem WhatsApp real ainda)",
-  "main": "server.js",
-  "type": "commonjs",
+  "name": "scobtech-atendimento",
+  "version": "1.0.0",
+  "description": "Sistema de atendimento WhatsApp + IA (scobtech) — multi-academia. Node + Express + PostgreSQL + LLM.",
+  "main": "src/index.js",
+  "type": "module",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=18"
   },
   "scripts": {
-    "start": "node server.js",
-    "simulate": "node scripts/simulate-message.js",
-    "simulate-demo": "node scripts/simulate-demo.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "initdb": "node src/db/init.js"
   },
   "dependencies": {
-    "cookie-parser": "^1.4.6",
-    "cors": "^2.8.5",
+    "chart.js": "^4.4.1",
     "express": "^4.19.2",
-    "web-push": "^3.6.7"
+    "pg": "^8.12.0"
   }
 }

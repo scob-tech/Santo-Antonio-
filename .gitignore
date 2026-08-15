@@ -1,27 +1,8 @@
-# Dependências — reinstala sozinho com "npm install", não precisa (e não deve) ir pro Git
 node_modules/
-
-# Banco de dados local — em produção mora no Volume do Railway (/data), não no repositório.
-# Subir isso por engano sobrescreveria/misturaria dado de teste local com o banco real.
-data.sqlite
-data.sqlite-journal
-data.sqlite-wal
-data.sqlite-shm
-*.sqlite
-*.sqlite3
-
-# Variáveis de ambiente / segredos — chaves da Anthropic, Z-API, etc.
-# Essas ficam configuradas direto nas "Variables" do Railway, nunca em arquivo versionado.
 .env
 .env.local
-.env.*.local
-
-# Logs
-npm-debug.log*
 *.log
-
-# Arquivos de SO/editor
+npm-debug.log*
 .DS_Store
-Thumbs.db
-.vscode/
-.idea/
+dist/
+coverage/

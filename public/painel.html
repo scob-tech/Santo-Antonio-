@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scobtech · Painel de Atendimento · DANDY</title>
+<link rel="stylesheet" href="/styles.css">
+<script src="/vendor/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ================= TOPBAR ================= -->
+<div class="topbar">
+  <img src="/logo.png" alt="Academia DANDY" class="logo-img">
+  <nav class="nav" id="nav">
+    <button class="active" data-pane="visao">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Visão geral
+    </button>
+    <button data-pane="atendimento">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+      Atendimento
+      <span class="badge hide" id="navBadgeAtend">0</span>
+    </button>
+    <button data-pane="funil">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+      Funil
+    </button>
+    <button data-pane="equipe" class="role-coordenador role-gerente">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+      Equipe
+    </button>
+    <button data-pane="gargalos" class="role-coordenador role-gerente">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Gargalos
+      <span class="badge hide" id="navBadgeGarg">0</span>
+    </button>
+    <button data-pane="metas">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+      Metas
+    </button>
+  </nav>
+  <div class="spacer"></div>
+  <button class="role-btn">
+    <span class="rav" id="avatar">MA</span>
+    <span class="who"><span id="papelLabel">—</span><small>Rede DANDY · 5 unidades</small></span>
+    <a href="/" class="sair" onclick="sair(event)">sair</a>
+  </button>
+</div>
+
+<div id="demoFlag" class="demo-flag hide">Modo demonstração — dados de exemplo. Conecte o banco e a Meta pra ver os números reais.</div>
+
+<div class="page">
+
+  <!-- ============ VISÃO GERAL ============ -->
+  <section class="pane sel" id="pane-visao">
+    <div class="page-head">
+      <div>
+        <h1>Visão da rede — Academia DANDY</h1>
+        <div class="sub">Atendimento no WhatsApp · consolidado das unidades</div>
+      </div>
+      <span class="tagband" id="tagPapel">—</span>
+    </div>
+
+    <!-- banner IA -->
+    <div class="gsum" id="iaBanner">
+      <div class="ai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 13.6 7 17.2l1.9-5.8L4 7.8h6.1L12 2z"/></svg></div>
+      <div class="tx">
+        <div class="t" id="iaTitulo">A IA está analisando o atendimento…</div>
+        <div class="d" id="iaResumo">—</div>
+      </div>
+      <button class="btn primary" onclick="irPara('gargalos')">Ver gargalos →</button>
+    </div>
+
+    <div class="tempos-strip">
+      <span>⏱ Tempo até a 1ª resposta: <b id="tmprVisao">—</b></span>
+      <span>✅ Tempo médio até resolver: <b id="tmaVisao">—</b></span>
+    </div>
+
+    <!-- KPIs -->
+    <div class="kpis">
+      <div class="kpi accent">
+        <div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Aguardando</div>
+        <div class="val" id="kAguardando">—</div>
+        <div class="delta">esperando resposta</div>
+      </div>
+      <div class="kpi">
+        <div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Em atendimento</div>
+        <div class="val" id="kAtendimento">—</div>
+        <div class="delta">conversas ativas</div>
+      </div>
+      <div class="kpi warn">
+        <div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>Parados +24h</div>
+        <div class="val" id="kParados">—</div>
+        <div class="delta">sem movimento</div>
+      </div>
+      <div class="kpi good">
+        <div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Resolvidos</div>
+        <div class="val" id="kResolvidos">—</div>
+        <div class="delta">atendimentos concluídos</div>
+      </div>
+      <div class="kpi">
+        <div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>Tarefas da IA</div>
+        <div class="val" id="kTarefas">—</div>
+        <div class="delta">follow-ups pendentes</div>
+      </div>
+    </div>
+
+    <div class="grid-2b">
+      <div class="card">
+        <h3>Conversas por dia</h3>
+        <div class="sub">Recebidas × enviadas · últimos 7 dias</div>
+        <div class="chart-box"><canvas id="cVolume"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Distribuição de status</h3>
+        <div class="sub">Como estão as conversas agora</div>
+        <div class="chart-box"><canvas id="cStatus"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid-2b">
+      <div class="card">
+        <h3>Economia de WhatsApp</h3>
+        <div class="sub">O motor de custo em ação</div>
+        <div class="eco-num">
+          <div class="ok"><div class="v" id="ecoEconomia">—</div><div class="k">economia estimada</div></div>
+          <div><div class="v" id="ecoReal">—</div><div class="k">custo otimizado</div></div>
+          <div><div class="v" id="ecoSem">—</div><div class="k">se fosse tudo marketing</div></div>
+        </div>
+        <div class="chart-box sm"><canvas id="cEco"></canvas></div>
+        <div class="legenda">
+          <span><i style="background:#12a150"></i>Texto livre (grátis)</span>
+          <span><i style="background:#1f37a3"></i>Utilidade (barato)</span>
+          <span><i style="background:#d98a1f"></i>Marketing (caro)</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Metas por unidade</h3>
+        <div class="sub">Realizado × meta do mês</div>
+        <div class="chart-box sm"><canvas id="cMetas"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div><h3 style="margin:0">Tarefas da IA (curadoria)</h3>
+          <div class="sub" style="margin:2px 0 0">Follow-ups gerados pela IA no fim do dia</div></div>
+        <button class="btn primary role-gerente" style="white-space:nowrap" onclick="rodarCuradoria()">Rodar curadoria agora</button>
+      </div>
+      <div id="listaTarefas" style="margin-top:12px"><p class="muted">—</p></div>
+    </div>
+  </section>
+
+  <!-- ============ ATENDIMENTO ============ -->
+  <section class="pane" id="pane-atendimento">
+    <div class="page-head">
+      <div><h1>Atendimento</h1><div class="sub">Inbox unificada do WhatsApp com sugestão da IA</div></div>
+    </div>
+    <div class="grid-cols">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div><h3 style="margin:0">Inbox de conversas</h3><div class="sub" style="margin:2px 0 0">Clique para abrir e responder</div></div>
+          <button class="btn primary" style="white-space:nowrap" onclick="abrirDisparo()">+ Nova conversa</button>
+        </div>
+        <div id="listaConversas" style="margin-top:12px"><p class="muted">Carregando…</p></div>
+      </div>
+      <div class="card card-janelas">
+        <h3>⏳ Janelas de 24h fechando</h3>
+        <div class="sub">Responda antes de fechar pra não pagar template</div>
+        <div id="listaJanelas"><p class="muted">—</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FUNIL ============ -->
+  <section class="pane" id="pane-funil">
+    <div class="page-head">
+      <div><h1>Funil de vendas</h1><div class="sub">Desfecho dos atendimentos e conversão por vendedor</div></div>
+      <span class="tagband" id="funilConv">—</span>
+    </div>
+    <div class="grid-2b">
+      <div class="card">
+        <h3>Etapas do funil</h3>
+        <div class="sub">Do lead ao desfecho</div>
+        <div id="funilEtapas"></div>
+      </div>
+      <div class="card">
+        <h3>Conversão por vendedor</h3>
+        <div class="sub">Matrículas ÷ atendimentos com desfecho</div>
+        <div id="funilVendedores"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ EQUIPE ============ -->
+  <section class="pane" id="pane-equipe">
+    <div class="page-head">
+      <div><h1>Equipe</h1><div class="sub">Presença, distribuição de conversas e tempos de resposta</div></div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi"><div class="lab">Disponíveis agora</div><div class="val" id="eqDisp">—</div><div class="delta">vendedores online</div></div>
+      <div class="kpi good"><div class="lab">Tempo até 1ª resposta</div><div class="val" id="eqTmpr">—</div><div class="delta">TMPR médio</div></div>
+      <div class="kpi accent"><div class="lab">Tempo até resolver</div><div class="val" id="eqTma">—</div><div class="delta">TMA médio</div></div>
+    </div>
+    <div class="card">
+      <h3>Time</h3>
+      <div class="sub">Clique no status para mudar a presença (afeta a distribuição de leads)</div>
+      <div id="listaEquipe"></div>
+    </div>
+  </section>
+
+  <!-- ============ GARGALOS ============ -->
+  <section class="pane" id="pane-gargalos">
+    <div class="page-head">
+      <div><h1>Gargalos</h1><div class="sub">Onde o atendimento está travando — detectado pela IA</div></div>
+    </div>
+    <div class="card"><div id="listaGargalos"><p class="muted">—</p></div></div>
+  </section>
+
+  <!-- ============ METAS ============ -->
+  <section class="pane" id="pane-metas">
+    <div class="page-head">
+      <div><h1>Metas de vendas</h1><div class="sub">Acompanhamento do mês por unidade</div></div>
+    </div>
+    <div class="card"><div id="listaMetas"><p class="muted">—</p></div></div>
+  </section>
+
+</div>
+
+<!-- Drawer da conversa -->
+<div class="drawer" id="drawer">
+  <div class="dh">
+    <b id="drawerNome">Conversa</b>
+    <button class="btn" onclick="fecharDrawer()">Fechar</button>
+  </div>
+  <div class="body" id="drawerBody"></div>
+  <div class="foot">
+    <div class="desfecho-row" id="desfechoRow">
+      <span class="dl">Desfecho:</span>
+      <button class="df matriculou" onclick="marcarDesfecho('matriculou')">Matriculou</button>
+      <button class="df ja_aluno" onclick="marcarDesfecho('ja_aluno')">Já é aluno</button>
+      <button class="df vai_pensar" onclick="marcarDesfecho('vai_pensar')">Vai pensar</button>
+      <button class="df sem_interesse" onclick="marcarDesfecho('sem_interesse')">Sem interesse</button>
+      <button class="df sem_resposta" onclick="marcarDesfecho('sem_resposta')">Sem resposta</button>
+    </div>
+    <div class="quick-row" id="quickRow"></div>
+    <div class="envio-info" id="envioInfo"></div>
+    <div class="janela-aviso hide" id="janelaAviso">⏳ Janela de 24h fechada — para falar agora, envie um <b>template aprovado</b>.</div>
+    <textarea id="respTexto" placeholder="Escreva a resposta… (ou use um atalho acima)"></textarea>
+    <div class="composer-actions">
+      <button class="btn" id="btnTemplate" onclick="abrirTemplateConversa()">✚ Template</button>
+      <button class="btn primary" id="btnEnviar" onclick="responder()">Enviar resposta</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: enviar template dentro da conversa -->
+<div class="modal-bg" id="modalTplConv">
+  <div class="modal">
+    <div class="mh"><b>Enviar template</b><button class="mx" onclick="fecharTplConv()">✕</button></div>
+    <div class="mb">
+      <div class="sub" style="margin:-4px 0 12px">Para <b id="tcContato">o contato</b>. Escolha um template aprovado e ajuste as variáveis — obrigatório quando a janela de 24h está fechada.</div>
+      <label class="campo"><span>Template</span><select id="tcTpl" onchange="montarVarsTC()"></select></label>
+      <div id="tcVars"></div>
+      <div class="preview-lbl">Prévia da mensagem</div>
+      <div class="preview" id="tcPreview">—</div>
+      <div class="erro" id="tcErro"></div>
+    </div>
+    <div class="mf">
+      <button class="btn" onclick="fecharTplConv()">Cancelar</button>
+      <button class="btn primary" onclick="enviarTemplateConversa()">Enviar template</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: iniciar conversa por template -->
+<div class="modal-bg" id="modalDisparo">
+  <div class="modal">
+    <div class="mh"><b>Iniciar conversa</b><button class="mx" onclick="fecharDisparo()">✕</button></div>
+    <div class="mb">
+      <div class="sub" style="margin:-4px 0 12px">Pra falar com quem ainda não te respondeu, a primeira mensagem tem que ser um template aprovado.</div>
+      <label class="campo"><span>Nome do contato</span><input id="dNome" oninput="montarVars()" placeholder="Ex.: Bruno"></label>
+      <label class="campo"><span>WhatsApp (com DDD e país)</span><input id="dTel" placeholder="5511999999999"></label>
+      <label class="campo"><span>Mensagem inicial (template)</span><select id="dTpl" onchange="montarVars()"></select></label>
+      <div id="dVars"></div>
+      <div class="preview-lbl">Prévia da mensagem</div>
+      <div class="preview" id="dPreview">—</div>
+      <div class="erro" id="dErro"></div>
+    </div>
+    <div class="mf">
+      <button class="btn" onclick="fecharDisparo()">Cancelar</button>
+      <button class="btn primary" onclick="disparar()">Disparar mensagem</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
