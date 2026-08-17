@@ -11,25 +11,20 @@ const claudeIA = require('./claude');
 const push = require('./push');
 const agendador = require('./agendador');
 
-// REDEFINIR SENHA DO ADMIN (uso único e controlado) — se a variável de
-// ambiente RESET_ADMIN_SENHA estiver definida, o sistema redefine a senha
-// da conta "admin" pra esse valor toda vez que sobe. Passo a passo: defina
-// a variável no Railway com a nova senha, suba, entre com admin + essa
-// senha, e DEPOIS REMOVA a variável (pra não ficar uma senha guardada no
-// ambiente e pra não redefinir de novo a cada deploy). Não mexe em nenhum
-// dado de conversa.
-if (process.env.RESET_ADMIN_SENHA) {
-  try {
-    const novoHash = authLib.hashSenha(process.env.RESET_ADMIN_SENHA);
-    const r = db.prepare(`UPDATE vendedores SET senha_hash = ? WHERE login = 'admin'`).run(novoHash);
-    if (r.changes > 0) {
-      console.log('>> Senha da conta "admin" REDEFINIDA via RESET_ADMIN_SENHA. Entre e depois REMOVA essa variável.');
-    } else {
-      console.log('>> RESET_ADMIN_SENHA definida, mas não encontrei conta com login "admin".');
-    }
-  } catch (e) {
-    console.error('>> Falha ao redefinir a senha do admin:', e.message);
-  }
+// ⚠️ RECUPERAÇÃO DE ACESSO — TEMPORÁRIO. Redefine a senha da conta "admin"
+// pra "Recuperar@2026" TODA vez que o sistema sobe. É pra você recuperar o
+// acesso agora, sem depender de configurar nada. Não mexe em NENHUM dado de
+// conversa nem na senha de outros usuários — só a do "admin".
+// >>> ASSIM QUE VOCÊ ENTRAR, me avise: eu te devolvo a versão sem este trecho,
+//     e você troca a senha por uma sua na tela de "trocar senha". <<<
+try {
+  const novoHash = authLib.hashSenha('Recuperar@2026');
+  const r = db.prepare(`UPDATE vendedores SET senha_hash = ? WHERE login = 'admin'`).run(novoHash);
+  console.log(r.changes > 0
+    ? '>> [RECUPERACAO] senha do admin redefinida para: Recuperar@2026'
+    : '>> [RECUPERACAO] nao encontrei conta com login "admin".');
+} catch (e) {
+  console.error('>> [RECUPERACAO] falha ao redefinir senha do admin:', e.message);
 }
 
 const app = express();
