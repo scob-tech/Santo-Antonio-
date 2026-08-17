@@ -2020,6 +2020,23 @@ app.put('/api/admin/mensagens/:id/midia-compacta', requireAuth, requireAdmin, (r
   res.json({ ok: true, pulou: true });
 });
 
+// BACKUP / DOWNLOAD DO BANCO — gera uma cópia íntegra do banco (mesmo com o
+// sistema em uso) e envia pro admin baixar. Só de leitura: não altera nada no
+// que já funciona. Serve pra tirar uma cópia de segurança e pra migração.
+app.get('/api/admin/backup', requireAuth, requireAdmin, (req, res) => {
+  const fs = require('fs');
+  const dir = process.env.DATA_DIR || __dirname;
+  const tmp = path.join(dir, `backup-download-${Date.now()}.sqlite`);
+  try {
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+  } catch (e) {
+    return res.status(500).json({ erro: 'não deu pra gerar o backup agora: ' + e.message });
+  }
+  res.download(tmp, 'santo-antonio-backup.sqlite', () => {
+    fs.unlink(tmp, () => {});
+  });
+});
+
 app.post('/api/admin/compactar-banco', requireAuth, requireAdmin, (req, res) => {
   const tam = () => (db.prepare('PRAGMA page_count').get().page_count || 0) * (db.prepare('PRAGMA page_size').get().page_size || 0);
   try {
