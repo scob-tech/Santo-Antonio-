@@ -2037,6 +2037,30 @@ app.get('/api/admin/backup', requireAuth, requireAdmin, (req, res) => {
   });
 });
 
+// BACKUP LEVE — mesma cópia do banco, mas SEM as mídias pesadas (fotos e
+// documentos em base64 são retirados). Fica com todo o histórico de conversas,
+// contatos e leads, só que pequeno (uns poucos MB) — pra transferir fácil. As
+// mídias em si continuam no backup completo (o de 230 MB). Só leitura.
+app.get('/api/admin/backup-leve', requireAuth, requireAdmin, (req, res) => {
+  const fs = require('fs');
+  const { DatabaseSync } = require('node:sqlite');
+  const dir = process.env.DATA_DIR || __dirname;
+  const tmp = path.join(dir, `backup-leve-${Date.now()}.sqlite`);
+  try {
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    const t = new DatabaseSync(tmp);
+    // Tira o conteúdo pesado (base64), mantendo o tipo pra saber que era mídia.
+    t.exec(`UPDATE mensagens SET midia_url = NULL WHERE midia_url LIKE 'data:%'`);
+    t.exec('VACUUM');
+    t.close();
+  } catch (e) {
+    return res.status(500).json({ erro: 'não deu pra gerar o backup leve agora: ' + e.message });
+  }
+  res.download(tmp, 'santo-antonio-historico-leve.sqlite', () => {
+    fs.unlink(tmp, () => {});
+  });
+});
+
 app.post('/api/admin/compactar-banco', requireAuth, requireAdmin, (req, res) => {
   const tam = () => (db.prepare('PRAGMA page_count').get().page_count || 0) * (db.prepare('PRAGMA page_size').get().page_size || 0);
   try {

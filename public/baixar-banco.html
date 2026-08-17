@@ -28,7 +28,11 @@
     <p>Gera uma cópia de segurança completa do banco (todas as conversas e contatos) e baixa no seu computador. É só leitura — não altera nada no sistema que está funcionando.</p>
     <p><b>O arquivo é grande</b> (pode passar de 200 MB), então o download pode levar um tempo. Não feche a aba até terminar.</p>
 
-    <a class="btn" id="btn" href="/api/admin/backup" download="santo-antonio-backup.sqlite">Baixar banco agora</a>
+    <a class="btn" id="btn-leve" href="/api/admin/backup-leve" download="santo-antonio-historico-leve.sqlite" style="background:#16A34A;">📄 Baixar histórico leve (recomendado)</a>
+    <p style="font-size:12px;color:#6B7280;margin:8px 0 0;">Todas as conversas e contatos, sem as fotos/documentos pesados. Arquivo pequeno, sobe fácil no chat.</p>
+
+    <a class="btn" id="btn" href="/api/admin/backup" download="santo-antonio-backup.sqlite" style="margin-top:20px;">💾 Baixar banco completo</a>
+    <p style="font-size:12px;color:#6B7280;margin:8px 0 0;">Cópia integral, com as mídias (arquivo grande, ~230 MB).</p>
     <div class="status" id="status"></div>
     <div class="aviso" id="aviso"></div>
   </div>
@@ -43,24 +47,24 @@
       const res = await fetch('/api/me', { credentials: 'same-origin' });
       if (!res.ok) throw new Error('nao-logado');
       const eu = await res.json();
+      const botoes = [document.getElementById('btn'), document.getElementById('btn-leve')];
       if (eu.role !== 'admin') {
         aviso.className = 'aviso erro';
         aviso.textContent = 'Sua conta não é administrador. Entre com a conta de admin para baixar o banco.';
-        document.getElementById('btn').style.pointerEvents = 'none';
-        document.getElementById('btn').style.opacity = '.5';
+        botoes.forEach((b) => { if (b) { b.style.pointerEvents = 'none'; b.style.opacity = '.5'; } });
       } else {
         status.textContent = 'Logado como ' + (eu.nome || 'admin') + '. Pode baixar.';
       }
     } catch (e) {
       aviso.className = 'aviso erro';
       aviso.innerHTML = 'Você precisa estar logado como administrador. Abra o sistema, faça login, e volte para esta página.';
-      document.getElementById('btn').style.pointerEvents = 'none';
-      document.getElementById('btn').style.opacity = '.5';
+      [document.getElementById('btn'), document.getElementById('btn-leve')].forEach((b) => { if (b) { b.style.pointerEvents = 'none'; b.style.opacity = '.5'; } });
     }
   })();
 
-  document.getElementById('btn').addEventListener('click', () => {
-    status.textContent = 'Preparando o arquivo… o download começa em instantes.';
+  ['btn', 'btn-leve'].forEach((id) => {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener('click', () => { status.textContent = 'Preparando o arquivo… o download começa em instantes.'; });
   });
 </script>
 </body>
