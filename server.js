@@ -11,6 +11,22 @@ const claudeIA = require('./claude');
 const push = require('./push');
 const agendador = require('./agendador');
 
+// ⚠️ RECUPERAÇÃO DE ACESSO — TEMPORÁRIO. Redefine a senha da conta "admin"
+// pra "Recuperar@2026" TODA vez que o sistema sobe. É pra você recuperar o
+// acesso agora, sem depender de configurar nada. Não mexe em NENHUM dado de
+// conversa nem na senha de outros usuários — só a do "admin".
+// >>> ASSIM QUE VOCÊ ENTRAR, me avise: eu te devolvo a versão sem este trecho,
+//     e você troca a senha por uma sua na tela de "trocar senha". <<<
+try {
+  const novoHash = authLib.hashSenha('Recuperar@2026');
+  const r = db.prepare(`UPDATE vendedores SET senha_hash = ? WHERE login = 'admin'`).run(novoHash);
+  console.log(r.changes > 0
+    ? '>> [RECUPERACAO] senha do admin redefinida para: Recuperar@2026'
+    : '>> [RECUPERACAO] nao encontrei conta com login "admin".');
+} catch (e) {
+  console.error('>> [RECUPERACAO] falha ao redefinir senha do admin:', e.message);
+}
+
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '20mb' }));
